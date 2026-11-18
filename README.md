@@ -3,7 +3,7 @@
 Standalone Fastify API for issuing short-lived GitHub installation tokens to agent pods. Platform design: [broker architecture](https://github.com/julie-ng/ai-native-sdlc/blob/main/architecture/reference/token-broker.md).
 
 > [!NOTE]
-> The token exchange contract and policy are implemented with injected dependencies. The server wires GitHub and Kubernetes adapters from startup environment configuration. No UI.
+> The token exchange contract and policy are implemented with injected dependencies. The server wires GitHub and Kubernetes adapters from startup environment configuration. Deployed and verified on AKS on 2026-11-18; see [Live verification](#live-verification). No UI.
 
 ## Development
 
@@ -104,9 +104,9 @@ See the [issuer guide](docs-site/src/content/docs/github-issuer.md) for configur
 
 | Variable | Requirement / default |
 |---|---|
-| GH_APP_ID | Required numeric App ID |
+| GH_APP_ID | Required numeric **App ID**, from the App's own settings page (Settings → Developer settings → GitHub Apps → the App → About). Not the installation ID and not the Client ID. |
 | GH_APP_PRIVATE_KEY_PATH | Required readable RSA PEM file path |
-| GH_REPOSITORIES | Required nonempty JSON object, e.g. `{"example/repo":{"repositoryId":123,"installationId":456}}`; IDs must be positive safe integers |
+| GH_REPOSITORIES | Required nonempty JSON object, e.g. `{"example/repo":{"repositoryId":123,"installationId":456}}`; IDs must be positive safe integers. `installationId` is the number at the end of the App's installation URL for that repository. |
 | KUBERNETES_API_URL | HTTPS origin; defaults to `https://kubernetes.default.svc` |
 | KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH | Defaults to `/var/run/secrets/kubernetes.io/serviceaccount/token` |
 | NODE_EXTRA_CA_CERTS | Set before Node starts; in cluster, `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
@@ -118,7 +118,7 @@ Build locally with `docker build -t github-broker:local .`. Supply configuration
 
 GitHub Actions verifies pull requests and pushes to main. After checks pass on a push to main, the production environment publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>`. Configure production environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services. The first real publication happens after merge.
 
-Infrastructure must provide namespace github-broker, ServiceAccount token-broker with workload identity, RBAC for TokenReview and pod lookup, ACR pull access, and SecretProviderClass github-broker-secrets exposing token-broker-gh-app-private-key. This change does not deploy infrastructure or run the live pod exchange test.
+Infrastructure must provide namespace github-broker, ServiceAccount token-broker with workload identity, RBAC for TokenReview and pod lookup, ACR pull access, and SecretProviderClass github-broker-secrets exposing token-broker-gh-app-private-key.
 
 ```sh
 cp manifests/.env.example manifests/.env
@@ -134,6 +134,28 @@ kubectl -n github-broker logs deployment/github-broker
 ```
 
 The in-cluster URL is http://github-broker.github-broker.svc.cluster.local. The readiness probe uses /healthz, which checks the process only. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`. After publishing a new latest image, use `kubectl -n github-broker rollout restart deployment/github-broker`.
+
+## Live verification
+
+Run by the human developer on 2026-11-18 against the AKS cluster, from throwaway test pods in `agents`. Each pod had a projected token with audience `token-broker`, no PAT and no other GitHub credential. All nine checks passed.
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `planner` pod requests a token | `200`, `expiresAt` from GitHub |
+| 2 | `planner` pushes a branch with it | Denied (`403`); the token sees only the assigned repository |
+| 3 | `coder` pushes a branch with it | Succeeded; the token sees only the assigned repository |
+| 4 | Pod without the repository annotation | `403 assignment_denied` |
+| 5 | Pod with another ServiceAccount (`foreman`) | `403 assignment_denied` |
+| 6 | Valid ServiceAccount token without the `token-broker` audience | `401 invalid_credential` |
+| 7 | Query string | `400 invalid_request` |
+| 8 | Body naming a repository | `400 invalid_request` |
+| 9 | Tokens in the broker log | None |
+
+The run also confirmed the cluster-side assumptions: AKS answers the TokenReview with `201`, bound tokens carry the pod name and UID in `user.extra`, and the broker trusts the cluster CA through `NODE_EXTRA_CA_CERTS`.
+
+**Troubleshooting:** the broker returns only error codes and logs no upstream causes, by design. A `503` after a successful token review comes from GitHub. GitHub answers `404 Integration not found` when `GH_APP_ID` is not the App's ID, a `404` on the installation when `installationId` is wrong, and `422` when the App lacks a requested permission. To see GitHub's answer, call the GitHub API from the broker pod with the same App ID and key.
+
+**Not covered:** the `503` paths for dependency failures (unit tests only), and a cross-repository denial with a second installed repository.
 
 ## Decision log
 
