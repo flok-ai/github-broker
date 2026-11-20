@@ -173,3 +173,9 @@ The run also confirmed the cluster-side assumptions: AKS answers the TokenReview
 | 2026-10-25 | Bootstrap a standalone Fastify application | Broker has no UI and remains separate from workflow/artifact services. |
 | 2026-10-25 | Use TypeScript ES modules, Node 24 LTS and Vitest | Architect's PR review supersedes the initial JavaScript, Node 22 and Node test-runner defaults. |
 | 2026-10-25 | Compile for production; use `tsx` for development | Type-check explicitly and test the compiled process that production will run. |
+
+## License
+
+[flok](https://github.com/flok-ai) GitHub token broker is licensed under the [GNU Affero General Public License v3.0 only](./LICENSE) (AGPL-3.0-only). Copies, modified versions and network deployments must keep the attribution described in [NOTICE](./NOTICE).
+
+Versions up to and including v0.1.0 were released under the MIT License.
