@@ -4,7 +4,7 @@
   "private": true,
   "description": "GitHub installation token broker for agent pods",
   "type": "module",
-  "license": "MIT",
+  "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=24.0.0 <25"
   },
