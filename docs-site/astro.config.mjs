@@ -3,8 +3,8 @@ import { defineConfig } from 'astro/config'
 import starlightOpenAPI, { openAPISidebarGroups } from 'starlight-openapi'
 
 export default defineConfig({
-  site: 'https://julie-ng.github.io',
-  base: '/ai-native-sdlc-github-broker',
+  site: 'https://flok-ai.github.io',
+  base: '/github-broker',
   server: { port: 4000 },
   integrations: [
     starlight({
