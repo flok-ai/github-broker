@@ -1,6 +1,6 @@
 # GitHub token broker
 
-Standalone Fastify API for issuing short-lived GitHub installation tokens to agent pods. Platform design: [broker architecture](https://github.com/julie-ng/ai-native-sdlc/blob/main/architecture/reference/token-broker.md).
+Standalone Fastify API for issuing short-lived GitHub installation tokens to agent pods. Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main/architecture/reference/token-broker.md).
 
 > [!NOTE]
 > The token exchange contract and policy are implemented with injected dependencies. The server wires GitHub and Kubernetes adapters from startup environment configuration. Deployed and verified on AKS on 2026-11-18; see [Live verification](#live-verification). No UI.
@@ -26,7 +26,7 @@ The server listens on `127.0.0.1:3000`. Set `HOST` and `PORT` to override; a con
 
 ## API reference site
 
-Published URL: <https://julie-ng.github.io/ai-native-sdlc-github-broker/>. Publication requires the docs workflow to deploy after merge; live availability is not yet verified. The human developer must first set repository **Settings → Pages → Source: GitHub Actions**.
+Published URL: <https://flok-ai.github.io/github-broker/>. Publication requires the docs workflow to deploy after merge; live availability is not yet verified. The human developer must first set repository **Settings → Pages → Source: GitHub Actions**.
 
 ```sh
 npm ci
@@ -35,7 +35,7 @@ npm run docs:build
 npm run docs:dev
 ```
 
-`docs:build` generates the ignored `docs-site/openapi.json` from the Fastify route schemas with stub dependencies, then builds the default Starlight site into `docs-site/dist/`. `docs:dev` also regenerates the spec before starting Astro at <http://localhost:4000/ai-native-sdlc-github-broker/>; restart it after route-schema changes. No network, cluster, GitHub key or token is needed to generate the spec. Swagger is a development dependency used only by the generation script; the running broker exposes no docs or OpenAPI route.
+`docs:build` generates the ignored `docs-site/openapi.json` from the Fastify route schemas with stub dependencies, then builds the default Starlight site into `docs-site/dist/`. `docs:dev` also regenerates the spec before starting Astro at <http://localhost:4000/github-broker/>; restart it after route-schema changes. No network, cluster, GitHub key or token is needed to generate the spec. Swagger is a development dependency used only by the generation script; the running broker exposes no docs or OpenAPI route.
 
 Route schemas must have `summary` and `description`; keep their tags, request/response schemas and examples aligned with behavior. Before a PR, run `npm run lint`, `npm run typecheck`, `npm test` and `npm run docs:build`. The docs workflow builds on pull requests without deploying, and deploys on pushes to `main` or manual dispatch on `main`. See [docs-site/README.md](docs-site/README.md) for the generation details.
 
@@ -163,13 +163,13 @@ The run also confirmed the cluster-side assumptions: AKS answers the TokenReview
 |---|---|---|
 | 2026-11-13 | Use GH_ for broker GitHub configuration variables | Align deployment configuration with the requested GitHub Actions variable names. |
 | 2026-11-13 | Wire startup adapters and ship a container, CI publication and plain envsubst manifests (#14) | Preserve Kubernetes defaults, reject empty allowlists, and fail before listening with fixed diagnostics. Infrastructure and human-run live tests remain separate. |
-| 2026-11-13 | Implement Kubernetes adapters with native fetch, startup-configured CA trust and per-call reads of the broker token file | Keep the two-call MVP dependency-free and observe projected-token updates without caching credentials. As clarified in [#8](https://github.com/julie-ng/ai-native-sdlc-github-broker/issues/8#issuecomment-6853981045), nonempty TokenReview status.error means unauthenticated (401); transport/HTTP failures remain dependency errors (503). |
-| 2026-11-13 | Generate an API reference with Swagger 9, Astro and the default Starlight theme, per [#10](https://github.com/julie-ng/ai-native-sdlc-github-broker/issues/10) | Swagger 9 supports Fastify 5. Reuse the reference repo's pinned Astro/Starlight/OpenAPI renderer versions; omit its TypeDoc, Tailwind and component overrides. Keep generation offline and out of the broker runtime. |
+| 2026-11-13 | Implement Kubernetes adapters with native fetch, startup-configured CA trust and per-call reads of the broker token file | Keep the two-call MVP dependency-free and observe projected-token updates without caching credentials. As clarified in [#8](https://github.com/flok-ai/github-broker/issues/8#issuecomment-6853981045), nonempty TokenReview status.error means unauthenticated (401); transport/HTTP failures remain dependency errors (503). |
+| 2026-11-13 | Generate an API reference with Swagger 9, Astro and the default Starlight theme, per [#10](https://github.com/flok-ai/github-broker/issues/10) | Swagger 9 supports Fastify 5. Reuse the reference repo's pinned Astro/Starlight/OpenAPI renderer versions; omit its TypeDoc, Tailwind and component overrides. Keep generation offline and out of the broker runtime. |
 | 2026-11-13 | Use `@octokit/auth-app` for App JWT signing and Node fetch for each installation-token request | Avoid hand-written signing and bypass the library's installation-token cache; each issuance sends explicit repository and permission scope. PKCS#1 keys are normalized to PKCS#8 in memory at startup. |
 | 2026-11-13 | Adopt the platform-services ESLint formatting rules in `eslint.config.mjs` | Keep formatting consistent across services. Retain this Fastify service's TypeScript base; the source config's Nuxt wrapper and JSDoc rules for absent `server/utils` and `server/db` directories do not apply here. |
 | 2026-11-13 | Implement the issue #6 MVP with injected functions and a server-side repository allowlist | Keep policy testable offline; real adapters and server wiring belong to separate issues. |
-| 2026-11-13 | Implement the proposed permissions: planner `contents: read`, `issues: read`; coder `contents: write`, `pull_requests: write`, `issues: read`; no run, step or attempt labels | Planner reads and clones; coder opens its own PR. Workflow traceability waits for the workflow service. Proposed in [#6](https://github.com/julie-ng/ai-native-sdlc-github-broker/issues/6) and discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Open for confirmation in the [PR #9 review](https://github.com/julie-ng/ai-native-sdlc-github-broker/pull/9). |
-| 2026-11-13 | Explicitly register route plugins under `src/routes/<version>/<resource>.<method>.ts` | Make URL and method visible in filenames while retaining native Fastify registration without autoload. Discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Keep this convention as requested in the [PR #9 review](https://github.com/julie-ng/ai-native-sdlc-github-broker/pull/9#discussion_r4563085759). |
+| 2026-11-13 | Implement the proposed permissions: planner `contents: read`, `issues: read`; coder `contents: write`, `pull_requests: write`, `issues: read`; no run, step or attempt labels | Planner reads and clones; coder opens its own PR. Workflow traceability waits for the workflow service. Proposed in [#6](https://github.com/flok-ai/github-broker/issues/6) and discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Open for confirmation in the [PR #9 review](https://github.com/flok-ai/github-broker/pull/9). |
+| 2026-11-13 | Explicitly register route plugins under `src/routes/<version>/<resource>.<method>.ts` | Make URL and method visible in filenames while retaining native Fastify registration without autoload. Discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Keep this convention as requested in the [PR #9 review](https://github.com/flok-ai/github-broker/pull/9#discussion_r4563085759). |
 | 2026-10-25 | Bootstrap a standalone Fastify application | Broker has no UI and remains separate from workflow/artifact services. |
 | 2026-10-25 | Use TypeScript ES modules, Node 24 LTS and Vitest | Architect's PR review supersedes the initial JavaScript, Node 22 and Node test-runner defaults. |
 | 2026-10-25 | Compile for production; use `tsx` for development | Type-check explicitly and test the compiled process that production will run. |

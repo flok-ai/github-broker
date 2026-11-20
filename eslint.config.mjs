@@ -4,7 +4,7 @@ import globals from 'globals'
 import { defineConfig } from 'eslint/config'
 import tseslint from 'typescript-eslint'
 
-// Shared formatting rules: https://github.com/julie-ng/ai-native-sdlc-platform-services/blob/main/eslint.config.mjs
+// Shared formatting rules: https://github.com/flok-ai/platform-services/blob/main/eslint.config.mjs
 // Use this service's TypeScript base instead of Nuxt's generated config.
 export default defineConfig([
   {

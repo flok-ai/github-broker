@@ -79,7 +79,7 @@ export async function createGitHubTokenIssuer(
             authorization: `Bearer ${jwt}`,
             accept: 'application/vnd.github+json',
             'x-github-api-version': '2026-03-10',
-            'user-agent': 'ai-native-sdlc-github-broker',
+            'user-agent': 'flok-github-broker',
             'content-type': 'application/json',
           },
           body: JSON.stringify({

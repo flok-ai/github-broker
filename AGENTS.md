@@ -13,4 +13,4 @@ Read and follow these alongside this repo’s project-specific instructions. Exp
 
 - Route schemas must include `summary` and `description`; keep tags, request/response schemas and examples aligned with behavior.
 - Run `npm run docs:build` before opening or updating a PR, alongside lint, typecheck and tests. Install docs dependencies with `npm ci --prefix docs-site`.
-- The API reference is built from route schemas and published at <https://julie-ng.github.io/ai-native-sdlc-github-broker/>. Do not commit `docs-site/openapi.json` or serve docs from the broker.
+- The API reference is built from route schemas and published at <https://flok-ai.github.io/github-broker/>. Do not commit `docs-site/openapi.json` or serve docs from the broker.
