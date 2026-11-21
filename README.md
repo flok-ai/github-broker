@@ -1,5 +1,8 @@
 # GitHub token broker
 
+[![Maintainability](https://qlty.sh/gh/flok-ai/projects/github-broker/maintainability.svg)](https://qlty.sh/gh/flok-ai/projects/github-broker)
+[![Code Coverage](https://qlty.sh/gh/flok-ai/projects/github-broker/coverage.svg)](https://qlty.sh/gh/flok-ai/projects/github-broker)
+
 Standalone Fastify API for issuing short-lived GitHub installation tokens to agent pods. Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main/architecture/reference/token-broker.md).
 
 > [!NOTE]
