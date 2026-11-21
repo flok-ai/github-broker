@@ -11,6 +11,8 @@ const failures: Record<string, string | undefined>[] = [
   { GH_REPOSITORIES: '{"example/repo":{"repositoryId":"secret-marker","installationId":2}}' },
   { GH_REPOSITORIES: '{"example/repo":{"repositoryId":1,"installationId":0}}' },
   { GH_REPOSITORIES: '{"invalid":{"repositoryId":1,"installationId":2}}' },
+  { GH_REPOSITORIES: '{"example/repo":{"repositoryId":1,"installationId":2,"extra":3}}' },
+  { GH_REPOSITORIES: '{"example/repo":[1,2]}' },
   { GH_APP_ID: undefined },
   { GH_APP_ID: 'secret-marker' },
   { GH_APP_PRIVATE_KEY_PATH: undefined },
