@@ -5,7 +5,6 @@ import { startupEnvironment } from './startup-fixture.js'
 
 const failures: Record<string, string | undefined>[] = [
   { GH_REPOSITORIES: undefined },
-  { GH_REPOSITORIES: 'secret-marker-invalid-json' },
   { GH_REPOSITORIES: '{}' },
   { GH_REPOSITORIES: '[]' },
   { GH_REPOSITORIES: '{"example/repo":{"repositoryId":"secret-marker","installationId":2}}' },

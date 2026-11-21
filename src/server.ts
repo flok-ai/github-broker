@@ -1,25 +1,7 @@
 import { buildApp } from './app.js'
 import { createGitHubTokenIssuer, GitHubTokenIssuerError } from './github-token-issuer.js'
 import { createKubernetesAdapters } from './kubernetes-adapters.js'
-import type { RepositoryAssignment } from './token-exchange.types.js'
-import { isPositiveSafeInteger, isRecord } from './validation.js'
-
-const repositoryNamePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
-
-function hasPositiveIds(entry: Record<string, unknown>): boolean {
-  return isPositiveSafeInteger(entry.repositoryId) && isPositiveSafeInteger(entry.installationId)
-}
-
-// Exactly repositoryId and installationId: two keys, both positive integers.
-function isRepositoryAssignment(value: unknown): value is RepositoryAssignment {
-  return isRecord(value) && Object.keys(value).length === 2 && hasPositiveIds(value)
-}
-
-function isRepositoryMapping(value: unknown): value is Record<string, RepositoryAssignment> {
-  return isRecord(value)
-    && Object.keys(value).length > 0
-    && Object.entries(value).every(([name, assignment]) => repositoryNamePattern.test(name) && isRepositoryAssignment(assignment))
-}
+import { parseRepositoryMapping } from './repository-mapping.js'
 
 // Fixed diagnostics only: never echo environment values or JSON parser errors.
 function configurationError(message: string): never {
@@ -27,13 +9,9 @@ function configurationError(message: string): never {
   process.exit(1)
 }
 
-let repositories: Record<string, RepositoryAssignment>
+let repositories: ReturnType<typeof parseRepositoryMapping>
 try {
-  const value: unknown = JSON.parse(process.env.GH_REPOSITORIES ?? '')
-  if (!isRepositoryMapping(value)) {
-    throw new Error()
-  }
-  repositories = value
+  repositories = parseRepositoryMapping(process.env.GH_REPOSITORIES)
 } catch {
   configurationError('GH_REPOSITORIES must be a nonempty owner/repo mapping with positive integer repositoryId and installationId')
 }
