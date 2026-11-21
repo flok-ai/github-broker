@@ -22,6 +22,7 @@ The server listens on `127.0.0.1:3000`. Set `HOST` and `PORT` to override; a con
 - `npm run lint`: ESLint and TypeScript recommended checks.
 - `npm run typecheck`: check service and test types without emitting files.
 - `npm test`: build the service, then run mocked endpoint tests and process tests for address configuration and SIGINT/SIGTERM shutdown.
+- `npm test -- --coverage` reports V8 coverage of `src/` in the terminal and writes `coverage/lcov.info`. Code exercised only by spawned server processes is outside the report.
 - `GET /healthz`: process liveness only; does not check Kubernetes, GitHub or Key Vault readiness.
 
 ## API reference site
@@ -116,7 +117,7 @@ Invalid configuration exits before listening with fixed diagnostics that omit su
 
 Build locally with `docker build -t github-broker:local .`. Supply configuration using `docker run --env-file <local-env-file> --mount type=bind,src=<absolute-key-file>,dst=/mnt/app.pem,readonly -e GH_APP_PRIVATE_KEY_PATH=/mnt/app.pem -p 3000:3000 github-broker:local`. The image uses the pinned platform-services Node 24 base, production dependencies and the non-root node user. The Docker context allows only build inputs.
 
-GitHub Actions verifies pull requests and pushes to main. After checks pass on a push to main, the production environment publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>`. Configure production environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services. The first real publication happens after merge.
+GitHub Actions verifies pull requests and pushes to main. After verification passes, a separate job uploads the LCOV report to Qlty using GitHub OIDC. After checks pass on a push to main, the production environment publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>`. Configure production environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services. The first real publication happens after merge.
 
 Infrastructure must provide namespace github-broker, ServiceAccount token-broker with workload identity, RBAC for TokenReview and pod lookup, ACR pull access, and SecretProviderClass github-broker-secrets exposing token-broker-gh-app-private-key.
 
@@ -161,6 +162,7 @@ The run also confirmed the cluster-side assumptions: AKS answers the TokenReview
 
 | Date | Decision | Reasoning |
 |---|---|---|
+| 2026-11-21 | Publish Vitest V8 coverage to Qlty | Use a separate upload job so the test job runs with read-only permissions. |
 | 2026-11-13 | Use GH_ for broker GitHub configuration variables | Align deployment configuration with the requested GitHub Actions variable names. |
 | 2026-11-13 | Wire startup adapters and ship a container, CI publication and plain envsubst manifests (#14) | Preserve Kubernetes defaults, reject empty allowlists, and fail before listening with fixed diagnostics. Infrastructure and human-run live tests remain separate. |
 | 2026-11-13 | Implement Kubernetes adapters with native fetch, startup-configured CA trust and per-call reads of the broker token file | Keep the two-call MVP dependency-free and observe projected-token updates without caching credentials. As clarified in [#8](https://github.com/flok-ai/github-broker/issues/8#issuecomment-6853981045), nonempty TokenReview status.error means unauthenticated (401); transport/HTTP failures remain dependency errors (503). |
