@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import type { PodLookup, TokenValidator } from './token-exchange.types.js'
+import type { PodLookup, TokenReviewResult, TokenValidator } from './token-exchange.types.js'
 import { isRecord } from './validation.js'
 
 export class KubernetesDependencyError extends Error {
@@ -8,6 +8,20 @@ export class KubernetesDependencyError extends Error {
     this.name = 'KubernetesDependencyError'
   }
 }
+
+interface Connection {
+  api: URL
+  tokenPath: string
+}
+
+type Pod = Awaited<ReturnType<PodLookup>>
+
+const defaultApiUrl = 'https://kubernetes.default.svc'
+const defaultTokenPath = '/var/run/secrets/kubernetes.io/serviceaccount/token'
+const denied = Object.freeze({
+  authenticated: false,
+  audienceMatches: false,
+} as const)
 
 function nonempty(value: unknown): value is string {
   return typeof value === 'string' && /^\S+$/.test(value)
@@ -22,6 +36,10 @@ function name(value: unknown, namespace = false): value is string {
 
 function singleExtra(value: unknown): value is [string] {
   return Array.isArray(value) && value.length === 1 && nonempty(value[0])
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every(entry => typeof entry === 'string')
 }
 
 function hasCredentials(url: URL): boolean {
@@ -74,124 +92,158 @@ function parseServiceAccount(username: unknown): {
   }
 }
 
+function parseBoundPod(extra: Record<string, unknown>): {
+  podName: string
+  podUid: string
+} | undefined {
+  const podNames = extra['authentication.kubernetes.io/pod-name']
+  const podUids = extra['authentication.kubernetes.io/pod-uid']
+  if (!singleExtra(podNames) || !name(podNames[0]) || !singleExtra(podUids)) {
+    return undefined
+  }
+  return {
+    podName: podNames[0],
+    podUid: podUids[0],
+  }
+}
+
+function parseTokenReview(result: unknown): TokenReviewResult {
+  if (!isRecord(result) || !isRecord(result.status)) {
+    return denied
+  }
+  const status = result.status
+  if (!isBrokerReview(status) || !isRecord(status.user)) {
+    return denied
+  }
+  const account = parseServiceAccount(status.user.username)
+  const pod = isRecord(status.user.extra) ? parseBoundPod(status.user.extra) : undefined
+  if (!account || !pod) {
+    return denied
+  }
+  return {
+    authenticated: true,
+    audienceMatches: true,
+    namespace: account.namespace,
+    serviceAccount: account.serviceAccount,
+    podName: pod.podName,
+    podUid: pod.podUid,
+  }
+}
+
+function parsePod(result: unknown): Pod {
+  if (!isRecord(result) || !isRecord(result.metadata) || !isRecord(result.spec)) {
+    throw new KubernetesDependencyError()
+  }
+  if (!nonempty(result.metadata.uid) || !name(result.spec.serviceAccountName)) {
+    throw new KubernetesDependencyError()
+  }
+  const annotations = result.metadata.annotations ?? {}
+  if (!isStringMap(annotations)) {
+    throw new KubernetesDependencyError()
+  }
+  return {
+    uid: result.metadata.uid,
+    serviceAccount: result.spec.serviceAccountName,
+    annotations,
+  }
+}
+
+function parseApiUrl(value: string | undefined): URL {
+  let api: URL
+  try {
+    api = new URL(value ?? defaultApiUrl)
+  } catch {
+    throw new KubernetesDependencyError()
+  }
+  if (!isApiOrigin(api)) {
+    throw new KubernetesDependencyError()
+  }
+  return api
+}
+
+function tokenReviewRequest(token: string): RequestInit {
+  return {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      apiVersion: 'authentication.k8s.io/v1',
+      kind: 'TokenReview',
+      spec: {
+        token,
+        audiences: ['token-broker'],
+      },
+    }),
+  }
+}
+
+// Read the mounted token per call so projected-token refreshes are observed.
+async function readBrokerToken(tokenPath: string): Promise<string> {
+  const token = (await readFile(tokenPath, 'utf8')).trim()
+  if (!nonempty(token)) {
+    throw new KubernetesDependencyError()
+  }
+  return token
+}
+
+// A successful review with malformed JSON is an unauthenticated result.
+// Body transport failures still become dependency errors in request().
+async function readJson(response: Response): Promise<unknown> {
+  try {
+    return await response.json()
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      return undefined
+    }
+    throw error
+  }
+}
+
+async function request(connection: Connection, path: string, options: RequestInit, expectedStatus: number): Promise<unknown> {
+  try {
+    const token = await readBrokerToken(connection.tokenPath)
+    const response = await fetch(new URL(path, connection.api), {
+      ...options,
+      headers: {
+        ...options.headers,
+        authorization: `Bearer ${token}`,
+        accept: 'application/json',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (response.status !== expectedStatus) {
+      await response.body?.cancel()
+      throw new KubernetesDependencyError()
+    }
+    return await readJson(response)
+  } catch {
+    // Neither API error bodies nor filesystem/network causes may escape.
+    throw new KubernetesDependencyError()
+  }
+}
+
 export function createKubernetesAdapters(
   env: Partial<Pick<NodeJS.ProcessEnv, 'KUBERNETES_API_URL' | 'KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH'>> = process.env,
 ): {
   tokenValidator: TokenValidator
   podLookup: PodLookup
 } {
-  let api: URL
-  try {
-    api = new URL(env.KUBERNETES_API_URL ?? 'https://kubernetes.default.svc')
-    if (!isApiOrigin(api)) {
-      throw new KubernetesDependencyError()
-    }
-  } catch {
-    throw new KubernetesDependencyError()
-  }
-  const tokenPath = env.KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH ?? '/var/run/secrets/kubernetes.io/serviceaccount/token'
-
-  async function request(path: string, options: RequestInit, expectedStatus: number): Promise<unknown> {
-    try {
-      // Read the mounted token per call so projected-token refreshes are observed.
-      const token = (await readFile(tokenPath, 'utf8')).trim()
-      if (!nonempty(token)) {
-        throw new KubernetesDependencyError()
-      }
-      const response = await fetch(new URL(path, api), {
-        ...options,
-        headers: {
-          ...options.headers,
-          authorization: `Bearer ${token}`,
-          accept: 'application/json',
-        },
-        redirect: 'error',
-        signal: AbortSignal.timeout(30_000),
-      })
-      if (response.status !== expectedStatus) {
-        await response.body?.cancel()
-        throw new KubernetesDependencyError()
-      }
-      try {
-        return await response.json()
-      } catch (error) {
-        // A successful review with malformed JSON is an unauthenticated result.
-        // Body transport failures still become dependency errors in the outer catch.
-        if (error instanceof SyntaxError) {
-          return undefined
-        }
-        throw error
-      }
-    } catch {
-      // Neither API error bodies nor filesystem/network causes may escape.
-      throw new KubernetesDependencyError()
-    }
+  const connection: Connection = {
+    api: parseApiUrl(env.KUBERNETES_API_URL),
+    tokenPath: env.KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH ?? defaultTokenPath,
   }
 
   const tokenValidator: TokenValidator = async (token) => {
-    const result = await request('/apis/authentication.k8s.io/v1/tokenreviews', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        apiVersion: 'authentication.k8s.io/v1',
-        kind: 'TokenReview',
-        spec: {
-          token,
-          audiences: ['token-broker'],
-        },
-      }),
-    }, 201)
-    const denied = {
-      authenticated: false,
-      audienceMatches: false,
-    } as const
-    if (!isRecord(result) || !isRecord(result.status)) {
-      return denied
-    }
-    const status = result.status
-    if (!isBrokerReview(status) || !isRecord(status.user)) {
-      return denied
-    }
-    const user = status.user
-    const account = parseServiceAccount(user.username)
-    if (!account || !isRecord(user.extra)) {
-      return denied
-    }
-    const podNames = user.extra['authentication.kubernetes.io/pod-name']
-    const podUids = user.extra['authentication.kubernetes.io/pod-uid']
-    if (!singleExtra(podNames) || !name(podNames[0]) || !singleExtra(podUids)) {
-      return denied
-    }
-    return {
-      authenticated: true,
-      audienceMatches: true,
-      namespace: account.namespace,
-      serviceAccount: account.serviceAccount,
-      podName: podNames[0],
-      podUid: podUids[0],
-    }
+    const result = await request(connection, '/apis/authentication.k8s.io/v1/tokenreviews', tokenReviewRequest(token), 201)
+    return parseTokenReview(result)
   }
 
   const podLookup: PodLookup = async ({ namespace, podName }) => {
     if (!name(namespace, true) || !name(podName)) {
       throw new KubernetesDependencyError()
     }
-    const result = await request(`/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}`, { method: 'GET' }, 200)
-    if (!isRecord(result) || !isRecord(result.metadata) || !isRecord(result.spec)) {
-      throw new KubernetesDependencyError()
-    }
-    if (!nonempty(result.metadata.uid) || !name(result.spec.serviceAccountName)) {
-      throw new KubernetesDependencyError()
-    }
-    const annotations = result.metadata.annotations ?? {}
-    if (!isRecord(annotations) || !Object.values(annotations).every(value => typeof value === 'string')) {
-      throw new KubernetesDependencyError()
-    }
-    return {
-      uid: result.metadata.uid,
-      serviceAccount: result.spec.serviceAccountName,
-      annotations: annotations as Record<string, string>,
-    }
+    const result = await request(connection, `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}`, { method: 'GET' }, 200)
+    return parsePod(result)
   }
 
   return {
