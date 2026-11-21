@@ -25,7 +25,37 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - run: npm test
+      - name: Tests with coverage
+        run: npm test -- --coverage
+      - name: Save coverage report
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/lcov.info
+          if-no-files-found: error
+          retention-days: 1
+
+  # Keep the coverage uploader's OIDC permission out of the job that runs project code.
+  coverage:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage
+          path: coverage
+      - name: Upload coverage to Qlty
+        uses: qltysh/qlty-action/coverage@v2
+        with:
+          oidc: true
+          files: coverage/lcov.info
 
   publish:
     needs: lint-and-test
