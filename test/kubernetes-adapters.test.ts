@@ -59,6 +59,28 @@ function adapters() {
   })
 }
 
+test.each([
+  'http://cluster.example',
+  'https://user@cluster.example',
+  'https://user:pass@cluster.example',
+  'https://cluster.example/prefix',
+  'https://cluster.example/?query=1',
+  'https://cluster.example/#fragment',
+  'not a url',
+])('rejects an unsafe Kubernetes API URL: %s', (url) => {
+  expect(() => createKubernetesAdapters({
+    KUBERNETES_API_URL: url,
+    KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH: tokenPath,
+  })).toThrow(KubernetesDependencyError)
+})
+
+test.each(['https://cluster.example', 'https://cluster.example:6443/'])('accepts an HTTPS origin as the Kubernetes API URL: %s', (url) => {
+  expect(() => createKubernetesAdapters({
+    KUBERNETES_API_URL: url,
+    KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH: tokenPath,
+  })).not.toThrow()
+})
+
 test('reviews only the caller token in the body and authenticates with the broker token in the header', async () => {
   fetchMock.mockResolvedValue(Response.json({ status }, { status: 201 }))
   const { tokenValidator } = adapters()

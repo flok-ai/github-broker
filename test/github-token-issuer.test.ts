@@ -197,10 +197,65 @@ test.each([
     ...assignment,
     permissions: {},
   },
-])('rejects incomplete scope before contacting GitHub: %j', async (scope) => {
+  {
+    ...assignment,
+    installationId: -1,
+  },
+  {
+    ...assignment,
+    repositoryId: 1.5,
+  },
+  {
+    ...assignment,
+    permissions: {
+      contents: 'admin',
+      issues: 'read',
+    },
+  },
+  {
+    ...assignment,
+    permissions: {
+      contents: 'read',
+      issues: 'write',
+    },
+  },
+  {
+    ...assignment,
+    permissions: {
+      ...assignment.permissions,
+      pull_requests: 'read',
+    },
+  },
+  {
+    ...assignment,
+    permissions: {
+      ...assignment.permissions,
+      administration: 'write',
+    },
+  },
+])('rejects incomplete or unpermitted scope before contacting GitHub: %j', async (scope) => {
   const issue = await issuer()
   await expect(issue(scope as Parameters<TokenIssuer>[0])).rejects.toBeInstanceOf(GitHubTokenIssuerError)
   expect(fetchMock).not.toHaveBeenCalled()
+})
+
+test.each([
+  [],
+  null,
+  { expires_at: expiresAt },
+  {
+    token: '',
+    expires_at: expiresAt,
+  },
+  {
+    token: 42,
+    expires_at: expiresAt,
+  },
+  { token: 'scoped-token' },
+])('rejects a malformed GitHub token response: %j', async (body) => {
+  fetchMock.mockImplementation(async () => Response.json(body, { status: 201 }))
+  const issue = await issuer()
+  await expect(issue(assignment)).rejects.toBeInstanceOf(GitHubTokenIssuerError)
 })
 
 test.each([
