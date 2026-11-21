@@ -2,6 +2,24 @@ import { buildApp } from './app.js'
 import { createGitHubTokenIssuer, GitHubTokenIssuerError } from './github-token-issuer.js'
 import { createKubernetesAdapters } from './kubernetes-adapters.js'
 import type { RepositoryAssignment } from './token-exchange.types.js'
+import { isPositiveSafeInteger, isRecord } from './validation.js'
+
+const repositoryNamePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+
+function hasPositiveIds(entry: Record<string, unknown>): boolean {
+  return isPositiveSafeInteger(entry.repositoryId) && isPositiveSafeInteger(entry.installationId)
+}
+
+// Exactly repositoryId and installationId: two keys, both positive integers.
+function isRepositoryAssignment(value: unknown): value is RepositoryAssignment {
+  return isRecord(value) && Object.keys(value).length === 2 && hasPositiveIds(value)
+}
+
+function isRepositoryMapping(value: unknown): value is Record<string, RepositoryAssignment> {
+  return isRecord(value)
+    && Object.keys(value).length > 0
+    && Object.entries(value).every(([name, assignment]) => repositoryNamePattern.test(name) && isRepositoryAssignment(assignment))
+}
 
 // Fixed diagnostics only: never echo environment values or JSON parser errors.
 function configurationError(message: string): never {
@@ -12,21 +30,10 @@ function configurationError(message: string): never {
 let repositories: Record<string, RepositoryAssignment>
 try {
   const value: unknown = JSON.parse(process.env.GH_REPOSITORIES ?? '')
-  if (typeof value !== 'object' || value === null || Array.isArray(value)
-    || Object.keys(value).length === 0
-    || !Object.entries(value).every(([name, assignment]) => {
-      if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(name)
-        || typeof assignment !== 'object' || assignment === null || Array.isArray(assignment)) {
-        return false
-      }
-      const entry = assignment as Record<string, unknown>
-      return Object.keys(entry).length === 2
-        && Number.isSafeInteger(entry.repositoryId) && Number(entry.repositoryId) > 0
-        && Number.isSafeInteger(entry.installationId) && Number(entry.installationId) > 0
-    })) {
+  if (!isRepositoryMapping(value)) {
     throw new Error()
   }
-  repositories = value as Record<string, RepositoryAssignment>
+  repositories = value
 } catch {
   configurationError('GH_REPOSITORIES must be a nonempty owner/repo mapping with positive integer repositoryId and installationId')
 }

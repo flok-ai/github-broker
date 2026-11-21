@@ -1,5 +1,6 @@
 import type { FastifyPluginAsync } from 'fastify'
 import type { TokenExchangeOptions, TokenPermissions } from '../../token-exchange.types.js'
+import { isRecord } from '../../validation.js'
 
 const permissionsByRole = {
   planner: {
@@ -12,6 +13,11 @@ const permissionsByRole = {
     issues: 'read',
   },
 } satisfies Record<string, TokenPermissions>
+
+// Accept only an absent body or {}.
+function isEmptyBody(body: unknown): boolean {
+  return body === undefined || (isRecord(body) && Object.keys(body).length === 0)
+}
 
 function errorResponse(code: string, description: string) {
   return {
@@ -94,10 +100,7 @@ const githubTokenRoute: FastifyPluginAsync<TokenExchangeOptions> = async (app, o
     },
     preValidation(request, reply, done) {
       // Validate before AJV can strip extra properties or coerce agent-controlled input.
-      const body = request.body
-      if (request.raw.url?.includes('?')
-        || (body !== undefined && (body === null || typeof body !== 'object'
-          || Array.isArray(body) || Object.keys(body).length !== 0))) {
+      if (request.raw.url?.includes('?') || !isEmptyBody(request.body)) {
         reply.code(400).send({ error: { code: 'invalid_request' } })
         return
       }

@@ -1,7 +1,8 @@
 import { createPrivateKey } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { createAppAuth } from '@octokit/auth-app'
-import type { TokenIssuer } from './token-exchange.types.js'
+import type { TokenIssuer, TokenPermissions } from './token-exchange.types.js'
+import { isPositiveSafeInteger, isRecord } from './validation.js'
 
 export class GitHubTokenIssuerError extends Error {
   constructor(message:
@@ -14,6 +15,41 @@ export class GitHubTokenIssuerError extends Error {
     super(message)
     this.name = 'GitHubTokenIssuerError'
   }
+}
+
+const scopeKeys = [
+  'contents',
+  'issues',
+  'pull_requests',
+]
+
+function hasOnlyScopeKeys(scope: TokenPermissions): boolean {
+  return Object.keys(scope).every(key => scopeKeys.includes(key))
+}
+
+function hasPermittedGrants(scope: TokenPermissions): boolean {
+  return ['read', 'write'].includes(scope.contents)
+    && scope.issues === 'read'
+    && (scope.pull_requests === undefined || scope.pull_requests === 'write')
+}
+
+function isPermittedScope(scope: TokenPermissions): boolean {
+  return hasPermittedGrants(scope) && hasOnlyScopeKeys(scope)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value !== ''
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function isTokenResponse(value: unknown): value is {
+  token: string
+  expires_at: string
+} {
+  return isRecord(value) && isNonEmptyString(value.token) && isTimestamp(value.expires_at)
 }
 
 // Call once during startup. Server wiring is deliberately separate from this adapter.
@@ -59,15 +95,7 @@ export async function createGitHubTokenIssuer(
         // Reject missing scope even for callers outside TypeScript; JSON must never
         // omit either field and silently inherit the installation's full grants.
         const scope = { ...permissions }
-        if (!Number.isSafeInteger(repositoryId) || repositoryId <= 0
-          || !Number.isSafeInteger(installationId) || installationId <= 0
-          || !['read', 'write'].includes(scope.contents) || scope.issues !== 'read'
-          || (scope.pull_requests !== undefined && scope.pull_requests !== 'write')
-          || Object.keys(scope).some(key => ![
-            'contents',
-            'issues',
-            'pull_requests',
-          ].includes(key))) {
+        if (!isPositiveSafeInteger(repositoryId) || !isPositiveSafeInteger(installationId) || !isPermittedScope(scope)) {
           throw new GitHubTokenIssuerError()
         }
         const { token: jwt } = await auth({ type: 'app' })
@@ -92,10 +120,7 @@ export async function createGitHubTokenIssuer(
           throw new GitHubTokenIssuerError()
         }
         const result: unknown = await response.json()
-        if (typeof result !== 'object' || result === null
-          || !('token' in result) || typeof result.token !== 'string' || !result.token
-          || !('expires_at' in result) || typeof result.expires_at !== 'string'
-          || !Number.isFinite(Date.parse(result.expires_at))) {
+        if (!isTokenResponse(result)) {
           throw new GitHubTokenIssuerError()
         }
         return {
