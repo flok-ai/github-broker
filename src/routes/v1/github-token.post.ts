@@ -63,7 +63,7 @@ const schema = {
   summary: 'Exchange a pod credential for a scoped GitHub token',
   description: 'Authenticate using Authorization: Bearer <projected Kubernetes token> with audience token-broker. '
     + 'The reviewed pod UID and ServiceAccount must match the looked-up pod in namespace agents. '
-    + 'Its ai-native-sdlc/repository annotation selects an allowlisted owner/repo. '
+    + 'Its flok-ai.com/repo annotation selects an allowlisted owner/repo. '
     + 'Planner permissions are contents: read and issues: read; coder permissions are contents: write, '
     + 'pull_requests: write and issues: read. No caller-supplied scope or query string is accepted. '
     + 'Omit the body and JSON content type, or send {} as application/json. An empty body with a JSON content type returns 400. '
@@ -139,7 +139,7 @@ async function authorize(options: TokenExchangeOptions, token: string): Promise<
   if (pod.uid !== identity.podUid || pod.serviceAccount !== role) {
     return { error: 'assignment_denied' }
   }
-  const repository = pod.annotations['ai-native-sdlc/repository']
+  const repository = pod.annotations['flok-ai.com/repo']
   if (typeof repository !== 'string' || !repoNamePattern.test(repository)) {
     return { error: 'assignment_denied' }
   }
