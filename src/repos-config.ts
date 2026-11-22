@@ -3,27 +3,31 @@ import { parse } from 'yaml'
 import type { RepoLookup, RepositoryAssignment } from './token-exchange.types.js'
 import { isPositiveSafeInteger, isRecord, repoNamePattern } from './validation.js'
 
+const invalidContent = 'Repo config must be a nonempty list of entries with name, slug, repositoryId and installationId'
+
 export class RepoConfigError extends Error {
   constructor(message:
     | 'Repo config file unreadable'
     | 'Repo config is invalid YAML'
-    | 'Repo config must be a nonempty owner/repo mapping with positive integer repositoryId and installationId') {
+    | 'Repo config contains duplicate slugs'
+    | typeof invalidContent) {
     super(message)
     this.name = 'RepoConfigError'
   }
 }
 
-function isRepositoryAssignment(value: unknown): value is RepositoryAssignment {
+function isRepoEntry(value: unknown): value is RepositoryAssignment & {
+  name: string
+  slug: string
+} {
   return isRecord(value)
-    && Object.keys(value).length === 2
+    && Object.keys(value).length === 4
+    && typeof value.name === 'string'
+    && value.name.trim() !== ''
+    && typeof value.slug === 'string'
+    && repoNamePattern.test(value.slug)
     && isPositiveSafeInteger(value.repositoryId)
     && isPositiveSafeInteger(value.installationId)
-}
-
-function isRepositoryMapping(value: unknown): value is Record<string, RepositoryAssignment> {
-  return isRecord(value)
-    && Object.keys(value).length > 0
-    && Object.entries(value).every(([repo, assignment]) => repoNamePattern.test(repo) && isRepositoryAssignment(assignment))
 }
 
 export async function createYamlRepoLookup(path: string): Promise<RepoLookup> {
@@ -46,9 +50,24 @@ export async function createYamlRepoLookup(path: string): Promise<RepoLookup> {
     throw new RepoConfigError('Repo config is invalid YAML')
   }
 
-  if (!isRepositoryMapping(value)) {
-    throw new RepoConfigError('Repo config must be a nonempty owner/repo mapping with positive integer repositoryId and installationId')
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new RepoConfigError(invalidContent)
   }
-  const assignments = new Map(Object.entries(value))
+  const assignments = new Map<string, RepositoryAssignment>()
+  for (const entry of value) {
+    if (!isRepoEntry(entry)) {
+      throw new RepoConfigError(invalidContent)
+    }
+    const {
+      slug, repositoryId, installationId,
+    } = entry
+    if (assignments.has(slug)) {
+      throw new RepoConfigError('Repo config contains duplicate slugs')
+    }
+    assignments.set(slug, {
+      repositoryId,
+      installationId,
+    })
+  }
   return async repo => assignments.get(repo)
 }

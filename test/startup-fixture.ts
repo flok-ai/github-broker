@@ -7,7 +7,7 @@ export function startupEnvironment() {
   const directory = mkdtempSync(join(tmpdir(), 'broker-startup-'))
   const keyPath = join(directory, 'app.pem')
   const reposPath = join(directory, 'repos.flok.yaml')
-  writeFileSync(reposPath, 'example/repo: {repositoryId: 1, installationId: 2}\n')
+  writeFileSync(reposPath, '- {name: Example, slug: example/repo, repositoryId: 1, installationId: 2}\n')
   const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
   writeFileSync(keyPath, privateKey.export({
     type: 'pkcs8',

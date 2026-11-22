@@ -75,7 +75,7 @@ The validator authenticates the projected token and checks its audience before p
 | `planner` | `contents: read`, `issues: read` |
 | `coder` | `contents: write`, `pull_requests: write`, `issues: read` |
 
-The looked-up pod's UID and ServiceAccount must match the reviewed token. Its `ai-native-sdlc/repository` annotation must be an exact `owner/repo` match in the YAML allowlist. The issuer receives that entry's explicit numeric `repositoryId` and `installationId`, plus the role's permissions. Caller-supplied scope is rejected. Upstream exceptions are neither logged nor included in responses.
+The looked-up pod's UID and ServiceAccount must match the reviewed token. Its `ai-native-sdlc/repository` annotation must be an exact match for an `owner/repo` slug in the YAML allowlist. The issuer receives that entry's explicit numeric `repositoryId` and `installationId`, plus the role's permissions. Caller-supplied scope is rejected. Upstream exceptions are neither logged nor included in responses.
 
 ### Dependency injection and tests
 
@@ -118,7 +118,7 @@ See the [issuer guide](docs-site/src/content/docs/github-issuer.md) for configur
 
 Invalid configuration exits before listening with fixed diagnostics that omit supplied values. Startup reads the App key and the allowlist before any GitHub or Kubernetes requests. Kubernetes token reads happen per request; the default ServiceAccount token automount must remain enabled. Node loads CA trust at process startup.
 
-[`repos.flok.yaml`](repos.flok.yaml) is a nonempty mapping keyed by `owner/repo`. Each entry contains exactly two positive safe integers, `repositoryId` and `installationId`. Get the repository ID with `gh api repos/<owner>/<repo> -q .id` and the installation ID from the end of the App's installation URL for the repo.
+[`repos.flok.yaml`](repos.flok.yaml) is a nonempty list. Each entry has a display `name`, a unique `owner/repo` slug, and positive safe integers for `repositoryId` and `installationId`. Get the repository ID with `gh api repos/<owner>/<repo> -q .id` and the installation ID from the end of the App's installation URL for the repo.
 
 Build locally with `docker build -t github-broker:local .`. Supply configuration using `docker run --env-file <local-env-file> --mount type=bind,src=<absolute-key-file>,dst=/mnt/app.pem,readonly --mount type=bind,src="$(pwd)/repos.flok.yaml",dst=/app/repos.flok.yaml,readonly -e GH_APP_PRIVATE_KEY_PATH=/mnt/app.pem -p 3000:3000 github-broker:local`. The image uses the pinned platform-services Node 24 base, production dependencies and the non-root node user. The Docker context allows only build inputs.
 
@@ -170,6 +170,7 @@ The run also confirmed the cluster-side assumptions: AKS answers the TokenReview
 
 | Date | Decision | Reasoning |
 |---|---|---|
+| 2026-11-22 | Use a list of named repos keyed at runtime by slug (#23 review) | Display names make the file easier to scan as repos are added. Reject duplicate slugs to keep lookup unambiguous. |
 | 2026-11-22 | Mount the YAML repo allowlist from a ConfigMap and load it through an async lookup (#23) | Keep allowlist edits separate from image builds and allow a database-backed lookup later. ConfigMap applies can bypass PR review. |
 | 2026-11-21 | Publish Vitest V8 coverage to Qlty | Use a separate upload job so the test job runs with read-only permissions. |
 | 2026-11-13 | Use GH_ for broker GitHub configuration variables | Align deployment configuration with the requested GitHub Actions variable names. |

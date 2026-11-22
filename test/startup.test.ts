@@ -50,7 +50,7 @@ test('invalid private key content is never included in startup errors', async ({
 test('invalid configuration exits the process before listening with a fixed diagnostic', ({ onTestFinished }) => {
   const fixture = startupEnvironment()
   onTestFinished(fixture.cleanup)
-  writeFileSync(fixture.env.GH_REPOS_CONFIG_PATH, 'owner/repo: {repositoryId: !secret-marker forbidden, installationId: 2}')
+  writeFileSync(fixture.env.GH_REPOS_CONFIG_PATH, '- {name: Example, slug: owner/repo, repositoryId: !secret-marker forbidden, installationId: 2}')
   const result = spawnSync(process.execPath, ['dist/server.js'], {
     env: {
       ...process.env,
@@ -60,6 +60,6 @@ test('invalid configuration exits the process before listening with a fixed diag
     timeout: 5000,
   })
   expect(result.status).toBe(1)
-  expect(result.stderr.trim()).toBe('Repo config must be a nonempty owner/repo mapping with positive integer repositoryId and installationId')
+  expect(result.stderr.trim()).toBe('Repo config must be a nonempty list of entries with name, slug, repositoryId and installationId')
   expect(result.stdout + result.stderr).not.toMatch(/secret-marker|Server listening/)
 })
