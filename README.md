@@ -140,9 +140,21 @@ kubectl -n github-broker get pods
 kubectl -n github-broker logs deployment/github-broker
 ```
 
-The deployment mounts the ConfigMap read-only at `/app/repos.flok.yaml`. The broker reads it once at startup. To change the allowlist, edit the file, apply the ConfigMap again, and run `kubectl -n github-broker rollout restart deployment/github-broker`. Applying a ConfigMap can use uncommitted local edits outside PR review. The planned database-backed lookup can replace the YAML lookup through the same async interface.
-
 The in-cluster URL is http://github-broker.github-broker.svc.cluster.local. The readiness probe uses /healthz, which checks the process only. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`. After publishing a new latest image, use `kubectl -n github-broker rollout restart deployment/github-broker`.
+
+### Update the allowlist
+
+For an existing deployment, edit `repos.flok.yaml` and run the following from the repository root. The target requires Bash, `kubectl`, and the local `manifests/.env` file.
+
+```sh
+kubectl config current-context
+# Confirm this is the intended cluster before continuing.
+make update-repos-config
+```
+
+The target sources `manifests/.env`, applies `repos.flok.yaml` to the `github-broker-repos` ConfigMap, restarts the broker, and waits up to 180 seconds for the rollout. The broker reads the read-only mount at `/app/repos.flok.yaml` once at startup, so the target requests a restart even when Kubernetes reports the ConfigMap as unchanged.
+
+After rollout, confirm that a pod annotated with an allowlisted slug receives `200` from the token exchange and that an unlisted slug receives `403`. The target applies the local file, including any uncommitted edits. The planned database-backed lookup can replace the YAML lookup through the same async interface.
 
 ## Live verification
 
