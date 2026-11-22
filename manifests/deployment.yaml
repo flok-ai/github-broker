@@ -43,9 +43,11 @@ spec:
               value: "${GH_APP_ID}"
             - name: GH_APP_PRIVATE_KEY_PATH
               value: /mnt/secrets/token-broker-gh-app-private-key
-            - name: GH_REPOSITORIES
-              value: '${GH_REPOSITORIES}'
           volumeMounts:
+            - name: repos
+              mountPath: /app/repos.flok.yaml
+              subPath: repos.flok.yaml
+              readOnly: true
             - name: secrets
               mountPath: /mnt/secrets
               readOnly: true
@@ -66,6 +68,9 @@ spec:
             capabilities:
               drop: [ALL]
       volumes:
+        - name: repos
+          configMap:
+            name: github-broker-repos
         - name: secrets
           csi:
             driver: secrets-store.csi.k8s.io
