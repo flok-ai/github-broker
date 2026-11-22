@@ -3,55 +3,94 @@
 [![Maintainability](https://qlty.sh/gh/flok-ai/projects/github-broker/maintainability.svg)](https://qlty.sh/gh/flok-ai/projects/github-broker)
 [![Code Coverage](https://qlty.sh/gh/flok-ai/projects/github-broker/coverage.svg)](https://qlty.sh/gh/flok-ai/projects/github-broker)
 
-Standalone Fastify API for issuing short-lived GitHub installation tokens to agent pods. Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main/architecture/reference/token-broker.md).
+Issues short-lived GitHub installation tokens to agent pods, scoped to one repository and the pod's role. Agent pods hold no PAT or other GitHub credential; only the broker holds the GitHub App key.
 
-> [!NOTE]
-> The token exchange contract and policy are implemented with injected dependencies. At startup, the server configures GitHub and Kubernetes adapters and loads the YAML repo allowlist. Deployed and verified on AKS on 2026-11-18; see [Live verification](#live-verification). No UI.
+Standalone Fastify API, no UI. Deployed to AKS and [verified live](docs/live-verification.md) on 2026-11-18. API reference: <https://flok-ai.github.io/github-broker/>.
 
-## Development
+## How it fits
 
-Node.js 24 LTS; `.node-version` and the package engine requirement select that release line. TypeScript ES modules and npm.
+Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main/architecture/reference/token-broker.md). Current state and decisions: [docs/architecture.md](docs/architecture.md).
 
-```sh
-npm ci
-npm run dev
+Kubernetes, not the pod, says who is calling. Pods annotated with the same repo get different access because they run as different ServiceAccounts:
+
+```
+                           Kubernetes API server
+                     signs ServiceAccount tokens
+                  │                                     │
+                  │ projected token                     │ projected token
+                  │ system:serviceaccount:              │ system:serviceaccount:
+                  │   agents:planner                    │   agents:coder
+                  │ aud: token-broker                   │ aud: token-broker
+                  ▼                                     ▼
+┌─ namespace: agents ───────────────────────────────────────────────────┐
+│ ┌─ pod: planner-… ───────────────┐   ┌─ pod: coder-… ───────────────┐ │
+│ │ serviceAccountName: planner    │   │ serviceAccountName: coder    │ │
+│ │ ai-native-sdlc/repository:     │   │ ai-native-sdlc/repository:   │ │
+│ │   owner/repo                   │   │   owner/repo                 │ │
+│ └───────────────┬────────────────┘   └────────────────┬─────────────┘ │
+└─────────────────┼─────────────────────────────────────┼───────────────┘
+                  │ Bearer <planner token>              │ Bearer <coder token>
+                  ▼                                     ▼
+┌─ github-broker ───────────────────────────────────────────────────────┐
+│        role from the ServiceAccount, never from the request           │
+└─────────────────┬─────────────────────────────────────┬───────────────┘
+                  ▼                                     ▼
+        GitHub token: read                    GitHub token: write
+        contents:read                         contents:write
+        issues:read                           pull_requests:write
+        owner/repo only                       issues:read
+                                              owner/repo only
 ```
 
-The server listens on `127.0.0.1:3000`. Set `HOST` and `PORT` to override; a container deployment will need `HOST=0.0.0.0`.
+One token request:
 
-- `npm run dev`: run TypeScript with the `tsx` file watcher.
-- `npm run build`: compile the service into `dist/`.
-- `npm start`: run the compiled service; run the build first.
-- `npm run lint`: ESLint and TypeScript recommended checks.
-- `npm run typecheck`: check service and test types without emitting files.
-- `npm test`: build the service, then run mocked endpoint tests and process tests for address configuration and SIGINT/SIGTERM shutdown.
-- `npm test -- --coverage` reports V8 coverage of `src/` in the terminal and writes `coverage/lcov.info`. Code exercised only by spawned server processes is outside the report.
-- `GET /healthz`: process liveness only; does not check Kubernetes, GitHub or Key Vault readiness.
-
-## API reference site
-
-Published URL: <https://flok-ai.github.io/github-broker/>. Publication requires the docs workflow to deploy after merge; live availability is not yet verified. The human developer must first set repository **Settings → Pages → Source: GitHub Actions**.
-
-```sh
-npm ci
-npm ci --prefix docs-site
-npm run docs:build
-npm run docs:dev
+```mermaid
+sequenceDiagram
+    participant Pod as planner pod
+    participant Broker as github-broker
+    participant K8s as Kubernetes API
+    participant GH as GitHub API
+    Pod->>Broker: POST /v1/github-token (bearer token, no body)
+    Broker->>K8s: TokenReview
+    K8s-->>Broker: agents/planner, pod name and UID
+    Broker->>K8s: GET pod
+    K8s-->>Broker: UID, ServiceAccount, repo annotation
+    Note over Broker: UID and ServiceAccount match?<br/>Repo allowlisted?<br/>planner → contents read, issues read
+    Broker->>GH: Installation token for one repo with role permissions
+    GH-->>Broker: token, expiry
+    Broker-->>Pod: 200 { token, expiresAt }
 ```
 
-`docs:build` generates the ignored `docs-site/openapi.json` from the Fastify route schemas with stub dependencies, then builds the default Starlight site into `docs-site/dist/`. `docs:dev` also regenerates the spec before starting Astro at <http://localhost:4000/github-broker/>; restart it after route-schema changes. No network, cluster, GitHub key or token is needed to generate the spec. Swagger is a development dependency used only by the generation script; the running broker exposes no docs or OpenAPI route.
+The broker never caches tokens and never accepts scope from the caller.
 
-Route schemas must have `summary` and `description`; keep their tags, request/response schemas and examples aligned with behavior. Before a PR, run `npm run lint`, `npm run typecheck`, `npm test` and `npm run docs:build`. The docs workflow builds on pull requests without deploying, and deploys on pushes to `main` or manual dispatch on `main`. See [docs-site/README.md](docs-site/README.md) for the generation details.
+## Using the broker
 
-`src/app.ts` constructs the application without opening a socket. `startServer(env)` in `src/start-server.ts` configures the adapters and logging and starts the listener using `HOST` and `PORT`. The `src/server.ts` entrypoint handles process errors and shutdown signals. Production logging uses Fastify's Pino integration with authorization-header redaction.
+### Caller requirements
 
-Local imports use `.js` extensions. Use relative imports for sibling files and `#src/…` for source modules in other directories. The package import map selects TypeScript source under the development condition and compiled JavaScript by default. The build emits service code only; Vitest handles the TypeScript test files. Tests generate disposable RSA keys and use no real credentials or network dependencies. Running the server requires the configuration below.
+| Requirement | Value |
+|---|---|
+| Namespace | `agents` |
+| ServiceAccount | `planner` or `coder`; anything else is denied |
+| Token | Projected ServiceAccount token with audience `token-broker` |
+| Pod annotation | `ai-native-sdlc/repository: owner/repo`, an exact match for a slug in the allowlist |
 
-## Token exchange
+| ServiceAccount | Issued permissions |
+|---|---|
+| `planner` | `contents: read`, `issues: read` |
+| `coder` | `contents: write`, `pull_requests: write`, `issues: read` |
 
-`POST /v1/github-token` accepts `Authorization: Bearer <projected Kubernetes token>`. The body must be absent or an empty JSON object (`{}`). Any query string, extra body field, malformed body or unsupported content type returns `400`. Validation runs before Fastify's schema processing can strip properties or coerce input.
+### Request
 
-Send no body without a JSON content type, or send `{}` as JSON. An empty body with `Content-Type: application/json` returns `400 invalid_request` from Fastify's JSON parser.
+From inside the cluster, at `http://github-broker.github-broker.svc.cluster.local`:
+
+```sh
+curl -X POST http://github-broker.github-broker.svc.cluster.local/v1/github-token \
+  -H "Authorization: Bearer $(cat <projected-token-path>)"
+```
+
+The body must be absent or an empty JSON object (`{}`). Send no body without a JSON content type, or send `{}` as JSON; an empty body with `Content-Type: application/json` returns `400`. Any query string, extra body field, malformed body or unsupported content type returns `400`. Validation runs before Fastify's schema processing can strip properties or coerce input.
+
+### Response
 
 Success returns `200`, `Cache-Control: no-store`, and:
 
@@ -59,7 +98,7 @@ Success returns `200`, `Cache-Control: no-store`, and:
 { "token": "<GitHub installation token>", "expiresAt": "2026-11-13T12:00:00Z" }
 ```
 
-Both values come from the issuer; the broker does not calculate expiry. Errors contain only `{ "error": { "code": "..." } }`:
+`expiresAt` comes from GitHub unchanged. Errors contain only `{ "error": { "code": "..." } }`:
 
 | HTTP | Code | Condition |
 |---|---|---|
@@ -68,43 +107,20 @@ Both values come from the issuer; the broker does not calculate expiry. Errors c
 | 403 | `assignment_denied` | Unapproved namespace/ServiceAccount, pod identity mismatch or missing/malformed/unapproved repository annotation |
 | 503 | `dependency_unavailable` | Token review, pod lookup, repo lookup or token issuer throws |
 
-The validator authenticates the projected token and checks its audience before pod lookup or issuance. Only namespace `agents` and these ServiceAccounts are permitted:
-
-| ServiceAccount | Issued permissions |
-|---|---|
-| `planner` | `contents: read`, `issues: read` |
-| `coder` | `contents: write`, `pull_requests: write`, `issues: read` |
-
-The looked-up pod's UID and ServiceAccount must match the reviewed token. Its `ai-native-sdlc/repository` annotation must be an exact match for an `owner/repo` slug in the YAML allowlist. The issuer receives that entry's explicit numeric `repositoryId` and `installationId`, plus the role's permissions. Caller-supplied scope is rejected. Upstream exceptions are neither logged nor included in responses.
-
-### Dependency injection and tests
-
-`buildApp(fastifyOptions, tokenExchangeOptions)` registers the endpoint when the second argument is supplied. `TokenExchangeOptions` in `src/token-exchange.types.ts` contains:
-
-- `tokenValidator`: the `TokenValidator` function returning authentication/audience results and reviewed pod identity.
-- `podLookup`: the `PodLookup` function returning UID, ServiceAccount and annotations for a namespace/pod name.
-- `tokenIssuer`: the `TokenIssuer` function returning a scoped token and its expiry.
-- `repoLookup`: the async `RepoLookup` function returning `{ repositoryId, installationId }` or `undefined` for an `owner/repo` name.
-
-The route plugin is explicitly registered from `src/routes/v1/github-token.post.ts`. Directories and the `.post.ts` suffix describe the URL and method; Fastify's route declaration implements them, without an autoload dependency.
-
-`startServer(env)` validates configuration and supplies the adapters and the YAML-backed lookup to `buildApp`, exposing `/healthz` and `/v1/github-token`.
-
-Run `npm run lint`, `npm run typecheck` and `npm test` on Node 24. `test/routes/v1/github-token.post.test.ts` uses Fastify `inject()` and mocked dependencies to verify the contract, exact issuance scope, call order, authorization denials and sanitized dependency failures. It needs no network, cluster, key or credentials. The existing `test/app.test.ts` process tests require permission to bind a loopback socket.
-
-## Kubernetes adapters
-
-`createKubernetesAdapters()` in `src/kubernetes-adapters.ts` implements `TokenValidator` with `POST /apis/authentication.k8s.io/v1/tokenreviews` and `PodLookup` with `GET /api/v1/namespaces/{namespace}/pods/{podName}`. It uses the broker's mounted ServiceAccount token, explicit `token-broker` audience, 30-second timeouts and rejected redirects. Failed authentication (including `status.error`) returns an unauthenticated result; API/transport failures throw a sanitized `KubernetesDependencyError` for the endpoint's `503` response.
-
-The broker ServiceAccount needs cluster-wide `tokenreviews: create` in API group `authentication.k8s.io` and core `pods: get` in namespace `agents`. Configure `KUBERNETES_API_URL` and `KUBERNETES_SERVICE_ACCOUNT_TOKEN_PATH` to override the default in-cluster API and mounted token path. Set `NODE_EXTRA_CA_CERTS=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` before starting Node to trust the cluster CA. See the [Kubernetes adapter guide](docs-site/src/content/docs/kubernetes-adapters.md) for configuration and error semantics. Infrastructure owns the RBAC; deployment manifests are in `manifests/`.
-
-## GitHub issuer adapter
-
-`createGitHubTokenIssuer()` in `src/github-token-issuer.ts` reads `GH_APP_ID` and `GH_APP_PRIVATE_KEY_PATH` at startup and returns a `TokenIssuer`. It loads the mounted RSA PEM once, converting PKCS#1 to PKCS#8 in memory. Every GitHub token request sends exactly one `repository_ids` entry and the explicit role `permissions`; installation tokens are never cached. GitHub's expiry is returned unchanged, and failures become sanitized `GitHubTokenIssuerError` instances. Startup errors identify missing/invalid configuration, unreadable files, invalid keys and non-RSA keys using fixed messages; issuance errors stay generic. The server constructs the issuer at startup; no upstream request is made until token issuance.
-
-See the [issuer guide](docs-site/src/content/docs/github-issuer.md) for configuration, request details and offline verification. The docs site includes the guide under “GitHub token issuer”.
+Upstream exceptions are neither logged nor included in responses. `GET /healthz` reports process liveness only; it does not check Kubernetes, GitHub or Key Vault readiness.
 
 ## Configuration and deployment
+
+### Prerequisites
+
+Infrastructure must provide:
+
+- Namespace `github-broker` and ServiceAccount `token-broker` with workload identity.
+- RBAC: cluster-wide `tokenreviews: create` (API group `authentication.k8s.io`) and core `pods: get` in namespace `agents`.
+- ACR pull access.
+- SecretProviderClass `github-broker-secrets` exposing `token-broker-gh-app-private-key`.
+
+### Configuration
 
 | Variable | Requirement / default |
 |---|---|
@@ -116,15 +132,13 @@ See the [issuer guide](docs-site/src/content/docs/github-issuer.md) for configur
 | NODE_EXTRA_CA_CERTS | Set before Node starts; in cluster, `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
 | HOST / PORT | `127.0.0.1` / `3000`; container sets HOST to `0.0.0.0` |
 
-Invalid configuration exits before listening with fixed diagnostics that omit supplied values. Startup reads the App key and the allowlist before any GitHub or Kubernetes requests. Kubernetes token reads happen per request; the default ServiceAccount token automount must remain enabled. Node loads CA trust at process startup.
-
 [`repos.flok.yaml`](repos.flok.yaml) is a nonempty list. Each entry has a display `name`, a unique `owner/repo` slug, and positive safe integers for `repositoryId` and `installationId`. Get the repository ID with `gh api repos/<owner>/<repo> -q .id` and the installation ID from the end of the App's installation URL for the repo.
 
-Build locally with `docker build -t github-broker:local .`. Supply configuration using `docker run --env-file <local-env-file> --mount type=bind,src=<absolute-key-file>,dst=/mnt/app.pem,readonly --mount type=bind,src="$(pwd)/repos.flok.yaml",dst=/app/repos.flok.yaml,readonly -e GH_APP_PRIVATE_KEY_PATH=/mnt/app.pem -p 3000:3000 github-broker:local`. The image uses the pinned platform-services Node 24 base, production dependencies and the non-root node user. The Docker context allows only build inputs.
+Invalid configuration exits before listening with fixed diagnostics that omit supplied values. Startup reads the App key and the allowlist before any GitHub or Kubernetes requests. Kubernetes token reads happen per request; the default ServiceAccount token automount must remain enabled. Node loads CA trust at process startup.
 
-GitHub Actions verifies pull requests and pushes to main. After verification passes, a separate job uploads the LCOV report to Qlty using GitHub OIDC. After checks pass on a push to main, the production environment publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>`. Configure production environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services. The first real publication happens after merge.
+### Deploy
 
-Infrastructure must provide namespace github-broker, ServiceAccount token-broker with workload identity, RBAC for TokenReview and pod lookup, ACR pull access, and SecretProviderClass github-broker-secrets exposing token-broker-gh-app-private-key.
+On pushes to `main`, after checks pass, CI publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>` from the production environment. It needs environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services.
 
 ```sh
 cp manifests/.env.example manifests/.env
@@ -140,7 +154,7 @@ kubectl -n github-broker get pods
 kubectl -n github-broker logs deployment/github-broker
 ```
 
-The in-cluster URL is http://github-broker.github-broker.svc.cluster.local. The readiness probe uses /healthz, which checks the process only. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`. After publishing a new latest image, use `kubectl -n github-broker rollout restart deployment/github-broker`.
+After publishing a new `latest` image, run `kubectl -n github-broker rollout restart deployment/github-broker`. The readiness probe uses `/healthz`. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`.
 
 ### Update the allowlist
 
@@ -156,47 +170,66 @@ The target sources `manifests/.env`, applies `repos.flok.yaml` to the `github-br
 
 After rollout, confirm that a pod annotated with an allowlisted slug receives `200` from the token exchange and that an unlisted slug receives `403`. The target applies the local file, including any uncommitted edits. The planned database-backed lookup can replace the YAML lookup through the same async interface.
 
-## Live verification
+### Troubleshooting
 
-Run by the human developer on 2026-11-18 against the AKS cluster, from throwaway test pods in `agents`. Each pod had a projected token with audience `token-broker`, no PAT and no other GitHub credential. All nine checks passed.
+The broker returns only error codes and logs no upstream causes, by design. A `503` after a successful token review can come from pod lookup or GitHub issuance with the YAML-backed allowlist. GitHub answers `404 Integration not found` when `GH_APP_ID` is not the App's ID, a `404` on the installation when `installationId` is wrong, and `422` when the App lacks a requested permission. To see GitHub's answer, call the GitHub API from the broker pod with the same App ID and key.
 
-| # | Check | Result |
-|---|---|---|
-| 1 | `planner` pod requests a token | `200`, `expiresAt` from GitHub |
-| 2 | `planner` pushes a branch with it | Denied (`403`); the token sees only the assigned repository |
-| 3 | `coder` pushes a branch with it | Succeeded; the token sees only the assigned repository |
-| 4 | Pod without the repository annotation | `403 assignment_denied` |
-| 5 | Pod with another ServiceAccount (`foreman`) | `403 assignment_denied` |
-| 6 | Valid ServiceAccount token without the `token-broker` audience | `401 invalid_credential` |
-| 7 | Query string | `400 invalid_request` |
-| 8 | Body naming a repository | `400 invalid_request` |
-| 9 | Tokens in the broker log | None |
+## Development
 
-The run also confirmed the cluster-side assumptions: AKS answers the TokenReview with `201`, bound tokens carry the pod name and UID in `user.extra`, and the broker trusts the cluster CA through `NODE_EXTRA_CA_CERTS`.
+Node.js 24 LTS (`.node-version` and the package engine requirement select that release line), TypeScript ES modules and npm.
 
-**Troubleshooting:** the broker returns only error codes and logs no upstream causes, by design. A `503` after a successful token review can come from pod lookup or GitHub issuance with the YAML-backed allowlist. GitHub answers `404 Integration not found` when `GH_APP_ID` is not the App's ID, a `404` on the installation when `installationId` is wrong, and `422` when the App lacks a requested permission. To see GitHub's answer, call the GitHub API from the broker pod with the same App ID and key.
+```sh
+npm ci
+npm run dev
+```
 
-**Not covered:** the `503` paths for dependency failures (unit tests only), and a cross-repository denial with a second installed repository.
+The server listens on `127.0.0.1:3000`; set `HOST` and `PORT` to override. Running the server requires the [configuration](#configuration) above.
 
-## Decision log
+- `npm run dev`: run TypeScript with the `tsx` file watcher.
+- `npm run build`: compile the service into `dist/`.
+- `npm start`: run the compiled service; run the build first.
+- `npm run lint`: ESLint and TypeScript recommended checks.
+- `npm run typecheck`: check service and test types without emitting files.
+- `npm test`: build the service, then run mocked endpoint tests and process tests for address configuration and SIGINT/SIGTERM shutdown.
+- `npm test -- --coverage`: report V8 coverage of `src/` in the terminal and write `coverage/lcov.info`. Code exercised only by spawned server processes is outside the report.
 
-| Date | Decision | Reasoning |
-|---|---|---|
-| 2026-11-22 | Use a list of named repos keyed at runtime by slug (#23 review) | Display names make the file easier to scan as repos are added. Reject duplicate slugs to keep lookup unambiguous. |
-| 2026-11-22 | Mount the YAML repo allowlist from a ConfigMap and load it through an async lookup (#23) | Keep allowlist edits separate from image builds and allow a database-backed lookup later. ConfigMap applies can bypass PR review. |
-| 2026-11-21 | Publish Vitest V8 coverage to Qlty | Use a separate upload job so the test job runs with read-only permissions. |
-| 2026-11-13 | Use GH_ for broker GitHub configuration variables | Align deployment configuration with the requested GitHub Actions variable names. |
-| 2026-11-13 | Wire startup adapters and ship a container, CI publication and plain envsubst manifests (#14) | Preserve Kubernetes defaults, reject empty allowlists, and fail before listening with fixed diagnostics. Infrastructure and human-run live tests remain separate. |
-| 2026-11-13 | Implement Kubernetes adapters with native fetch, startup-configured CA trust and per-call reads of the broker token file | Keep the two-call MVP dependency-free and observe projected-token updates without caching credentials. As clarified in [#8](https://github.com/flok-ai/github-broker/issues/8#issuecomment-6853981045), nonempty TokenReview status.error means unauthenticated (401); transport/HTTP failures remain dependency errors (503). |
-| 2026-11-13 | Generate an API reference with Swagger 9, Astro and the default Starlight theme, per [#10](https://github.com/flok-ai/github-broker/issues/10) | Swagger 9 supports Fastify 5. Reuse the reference repo's pinned Astro/Starlight/OpenAPI renderer versions; omit its TypeDoc, Tailwind and component overrides. Keep generation offline and out of the broker runtime. |
-| 2026-11-13 | Use `@octokit/auth-app` for App JWT signing and Node fetch for each installation-token request | Avoid hand-written signing and bypass the library's installation-token cache; each issuance sends explicit repository and permission scope. PKCS#1 keys are normalized to PKCS#8 in memory at startup. |
-| 2026-11-13 | Adopt the platform-services ESLint formatting rules in `eslint.config.mjs` | Keep formatting consistent across services. Retain this Fastify service's TypeScript base; the source config's Nuxt wrapper and JSDoc rules for absent `server/utils` and `server/db` directories do not apply here. |
-| 2026-11-13 | Implement the issue #6 MVP with injected functions and a server-side repository allowlist | Keep policy testable offline; real adapters and server wiring belong to separate issues. |
-| 2026-11-13 | Implement the proposed permissions: planner `contents: read`, `issues: read`; coder `contents: write`, `pull_requests: write`, `issues: read`; no run, step or attempt labels | Planner reads and clones; coder opens its own PR. Workflow traceability waits for the workflow service. Proposed in [#6](https://github.com/flok-ai/github-broker/issues/6) and discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Open for confirmation in the [PR #9 review](https://github.com/flok-ai/github-broker/pull/9). |
-| 2026-11-13 | Explicitly register route plugins under `src/routes/<version>/<resource>.<method>.ts` | Make URL and method visible in filenames while retaining native Fastify registration without autoload. Discussed with the human developer at a high level on 2026-11-13; not reviewed in detail. Keep this convention as requested in the [PR #9 review](https://github.com/flok-ai/github-broker/pull/9#discussion_r4563085759). |
-| 2026-10-25 | Bootstrap a standalone Fastify application | Broker has no UI and remains separate from workflow/artifact services. |
-| 2026-10-25 | Use TypeScript ES modules, Node 24 LTS and Vitest | Architect's PR review supersedes the initial JavaScript, Node 22 and Node test-runner defaults. |
-| 2026-10-25 | Compile for production; use `tsx` for development | Type-check explicitly and test the compiled process that production will run. |
+Before a PR, run `npm run lint`, `npm run typecheck`, `npm test` and `npm run docs:build`. GitHub Actions verifies pull requests and pushes to `main`; after verification passes, a separate job uploads the LCOV report to Qlty using GitHub OIDC.
+
+Build the image locally with `docker build -t github-broker:local .` and run it with `docker run --env-file <local-env-file> --mount type=bind,src=<absolute-key-file>,dst=/mnt/app.pem,readonly --mount type=bind,src="$(pwd)/repos.flok.yaml",dst=/app/repos.flok.yaml,readonly -e GH_APP_PRIVATE_KEY_PATH=/mnt/app.pem -p 3000:3000 github-broker:local`. The image uses the pinned platform-services Node 24 base, production dependencies and the non-root node user. The Docker context allows only build inputs.
+
+### Code layout
+
+- `src/app.ts`: `buildApp(fastifyOptions, tokenExchangeOptions)` constructs the application without opening a socket and registers the token endpoint when the second argument is supplied.
+- `src/start-server.ts`: `startServer(env)` validates configuration, supplies the adapters and the YAML-backed lookup to `buildApp`, configures logging (Pino, authorization header redacted) and starts the listener using `HOST` and `PORT`.
+- `src/server.ts`: the entrypoint; handles process errors and shutdown signals.
+- `src/routes/v1/github-token.post.ts`: the endpoint and its policy. Directories and the `.post.ts` suffix describe the URL and method; the plugin is registered explicitly, without autoload.
+- `src/token-exchange.types.ts`: `TokenExchangeOptions`, the injected dependencies:
+  - `tokenValidator`: authentication/audience result and reviewed pod identity.
+  - `podLookup`: UID, ServiceAccount and annotations for a namespace/pod name.
+  - `tokenIssuer`: a scoped token and its expiry.
+  - `repoLookup`: async lookup returning `{ repositoryId, installationId }` or `undefined` for an `owner/repo` name.
+- `src/repos-config.ts`: the YAML-backed `repoLookup`.
+- `src/kubernetes-adapters.ts`: `createKubernetesAdapters()` implements `TokenValidator` (TokenReview) and `PodLookup` with the broker's mounted ServiceAccount token, 30-second timeouts and rejected redirects. See the [Kubernetes adapter guide](docs-site/src/content/docs/kubernetes-adapters.md).
+- `src/github-token-issuer.ts`: `createGitHubTokenIssuer()` implements `TokenIssuer` from `GH_APP_ID` and `GH_APP_PRIVATE_KEY_PATH`, sending exactly one `repository_ids` entry and the role's `permissions` per request. See the [issuer guide](docs-site/src/content/docs/github-issuer.md).
+
+Local imports use `.js` extensions. Use relative imports for sibling files and `#src/…` for source modules in other directories. The package import map selects TypeScript source under the development condition and compiled JavaScript by default. The build emits service code only; Vitest handles the TypeScript test files.
+
+### Tests
+
+Tests generate disposable RSA keys and use no real credentials or network dependencies. `test/routes/v1/github-token.post.test.ts` uses Fastify `inject()` and mocked dependencies to verify the contract, exact issuance scope, call order, authorization denials and sanitized dependency failures. The `test/app.test.ts` process tests require permission to bind a loopback socket. Live checks against the cluster are recorded in [docs/live-verification.md](docs/live-verification.md).
+
+### API reference site
+
+```sh
+npm ci
+npm ci --prefix docs-site
+npm run docs:build
+npm run docs:dev
+```
+
+`docs:build` generates the ignored `docs-site/openapi.json` from the Fastify route schemas with stub dependencies, then builds the Starlight site into `docs-site/dist/`. `docs:dev` regenerates the spec and starts Astro at <http://localhost:4000/github-broker/>; restart it after route-schema changes. Generation needs no network, cluster, GitHub key or token. Swagger is a development dependency of the generation script only; the running broker exposes no docs or OpenAPI route.
+
+Route schemas must have `summary` and `description`; keep tags, request/response schemas and examples aligned with behavior. The docs workflow builds on pull requests and deploys on pushes to `main` or manual dispatch on `main`. See [docs-site/README.md](docs-site/README.md) for generation details.
 
 ## License
 
