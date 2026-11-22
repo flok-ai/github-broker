@@ -3,8 +3,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createGitHubTokenIssuer, GitHubTokenIssuerError } from '../src/github-token-issuer.js'
-import type { TokenIssuer, TokenPermissions } from '../src/token-exchange.types.js'
+import { createGitHubTokenIssuer, GitHubTokenIssuerError } from '#src/github-token-issuer.js'
+import type { TokenIssuer, TokenPermissions } from '#src/token-exchange.types.js'
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 })
 const pem = privateKey.export({

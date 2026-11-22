@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream'
 import { expect, test, vi } from 'vitest'
-import { buildApp } from '../../../src/app.js'
-import type { PodLookup, TokenIssuer, TokenValidator } from '../../../src/token-exchange.types.js'
+import { buildApp } from '#src/app.js'
+import type { PodLookup, RepoLookup, TokenIssuer, TokenValidator } from '#src/token-exchange.types.js'
 
 const identity = {
   authenticated: true as const,
@@ -28,6 +28,23 @@ function fixture() {
   const tokenValidator = vi.fn<TokenValidator>().mockResolvedValue({ ...identity })
   const podLookup = vi.fn<PodLookup>().mockResolvedValue({ ...pod })
   const tokenIssuer = vi.fn<TokenIssuer>().mockResolvedValue({ ...issued })
+  const assignments = new Map([
+    [
+      repository,
+      {
+        repositoryId: 123,
+        installationId: 456,
+      },
+    ],
+    [
+      'other/repo',
+      {
+        repositoryId: 789,
+        installationId: 987,
+      },
+    ],
+  ])
+  const repoLookup = vi.fn<RepoLookup>(async repo => assignments.get(repo))
   let logs = ''
   const stream = new Writable({
     write(chunk, _encoding, callback) {
@@ -44,22 +61,14 @@ function fixture() {
     tokenValidator,
     podLookup,
     tokenIssuer,
-    repositories: {
-      [repository]: {
-        repositoryId: 123,
-        installationId: 456,
-      },
-      'other/repo': {
-        repositoryId: 789,
-        installationId: 987,
-      },
-    },
+    repoLookup,
   })
   return {
     app,
     tokenValidator,
     podLookup,
     tokenIssuer,
+    repoLookup,
     logs: () => logs,
   }
 }
@@ -110,6 +119,7 @@ for (const role of ['planner', 'coder']) {
       namespace: 'agents',
       podName: 'planner-123',
     })
+    expect(f.repoLookup).toHaveBeenCalledExactlyOnceWith(repository)
     expect(f.tokenIssuer).toHaveBeenCalledExactlyOnceWith({
       repositoryId: 123,
       installationId: 456,
@@ -247,9 +257,9 @@ for (const value of [
   'a/b/c',
   'owner/repo name',
   ' owner/repo',
-  'owner/other',
+  'owner.name/repo',
 ]) {
-  test(`denies missing, malformed or unapproved repository: ${JSON.stringify(value)}`, async ({ onTestFinished }) => {
+  test(`denies missing or malformed repository: ${JSON.stringify(value)}`, async ({ onTestFinished }) => {
     const f = fixture()
     onTestFinished(() => f.app.close())
     f.podLookup.mockResolvedValue({
@@ -263,9 +273,29 @@ for (const value of [
     })
     expect(response.statusCode).toBe(403)
     expect(response.json()).toEqual({ error: { code: 'assignment_denied' } })
+    expect(f.repoLookup).not.toHaveBeenCalled()
     expect(f.tokenIssuer).not.toHaveBeenCalled()
   })
 }
+
+test('denies a valid repo name when the lookup has no assignment', async ({ onTestFinished }) => {
+  const f = fixture()
+  onTestFinished(() => f.app.close())
+  const repo = 'managed_owner/other'
+  f.podLookup.mockResolvedValue({
+    ...pod,
+    annotations: { [annotation]: repo },
+  })
+  const response = await f.app.inject({
+    method: 'POST',
+    url: '/v1/github-token',
+    headers,
+  })
+  expect(response.statusCode).toBe(403)
+  expect(response.json()).toEqual({ error: { code: 'assignment_denied' } })
+  expect(f.repoLookup).toHaveBeenCalledExactlyOnceWith(repo)
+  expect(f.tokenIssuer).not.toHaveBeenCalled()
+})
 
 test('selects the annotated repository rather than the first allowlist entry', async ({ onTestFinished }) => {
   const f = fixture()
@@ -385,6 +415,7 @@ test('rejects unsupported content types with the contract error', async ({ onTes
 for (const dependency of [
   'tokenValidator',
   'podLookup',
+  'repoLookup',
   'tokenIssuer',
 ] as const) {
   test(`sanitizes ${dependency} failures in response and logs`, async ({ onTestFinished }) => {

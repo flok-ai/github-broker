@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import Fastify from 'fastify'
 import swagger from '@fastify/swagger'
-import { registerAppRoutes } from '../src/app.js'
+import { registerAppRoutes } from '#src/app.js'
 
 const app = Fastify()
 try {
@@ -46,7 +46,7 @@ try {
     tokenValidator: unused,
     podLookup: unused,
     tokenIssuer: unused,
-    repositories: {},
+    repoLookup: async () => undefined,
   })
   await app.ready()
   await writeFile(new URL('../docs-site/openapi.json', import.meta.url), `${JSON.stringify(app.swagger(), null, 2)}\n`)

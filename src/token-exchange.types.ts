@@ -32,6 +32,10 @@ export interface RepositoryAssignment {
   installationId: number
 }
 
+export interface RepoLookup {
+  (repo: string): Promise<RepositoryAssignment | undefined>
+}
+
 export interface TokenPermissions {
   contents: 'read' | 'write'
   issues: 'read'
@@ -49,5 +53,5 @@ export interface TokenExchangeOptions {
   tokenValidator: TokenValidator
   podLookup: PodLookup
   tokenIssuer: TokenIssuer
-  repositories: Readonly<Record<string, RepositoryAssignment>>
+  repoLookup: RepoLookup
 }

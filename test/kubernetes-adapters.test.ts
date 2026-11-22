@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { createKubernetesAdapters, KubernetesDependencyError } from '../src/kubernetes-adapters.js'
-import { buildApp } from '../src/app.js'
+import { createKubernetesAdapters, KubernetesDependencyError } from '#src/kubernetes-adapters.js'
+import { buildApp } from '#src/app.js'
 
 const brokerToken = 'broker-private-token'
 const reviewedToken = 'reviewed-private-token'
@@ -380,7 +380,7 @@ test('the endpoint maps a rejected TokenReview to 401 and a failed API request t
   const app = buildApp({}, {
     ...adapters(),
     tokenIssuer,
-    repositories: {},
+    repoLookup: async () => undefined,
   })
   try {
     fetchMock.mockResolvedValueOnce(Response.json({
