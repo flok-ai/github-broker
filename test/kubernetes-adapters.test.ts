@@ -380,7 +380,7 @@ test('the endpoint maps a rejected TokenReview to 401 and a failed API request t
   const app = buildApp({}, {
     ...adapters(),
     tokenIssuer,
-    repositories: {},
+    repoLookup: async () => undefined,
   })
   try {
     fetchMock.mockResolvedValueOnce(Response.json({

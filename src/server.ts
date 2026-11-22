@@ -2,9 +2,7 @@ import { buildApp } from './app.js'
 import { createGitHubTokenIssuer, GitHubTokenIssuerError } from './github-token-issuer.js'
 import { createKubernetesAdapters } from './kubernetes-adapters.js'
 import type { RepositoryAssignment } from './token-exchange.types.js'
-import { isPositiveSafeInteger, isRecord } from './validation.js'
-
-const repositoryNamePattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+import { isPositiveSafeInteger, isRecord, repoNamePattern } from './validation.js'
 
 function hasPositiveIds(entry: Record<string, unknown>): boolean {
   return isPositiveSafeInteger(entry.repositoryId) && isPositiveSafeInteger(entry.installationId)
@@ -18,7 +16,7 @@ function isRepositoryAssignment(value: unknown): value is RepositoryAssignment {
 function isRepositoryMapping(value: unknown): value is Record<string, RepositoryAssignment> {
   return isRecord(value)
     && Object.keys(value).length > 0
-    && Object.entries(value).every(([name, assignment]) => repositoryNamePattern.test(name) && isRepositoryAssignment(assignment))
+    && Object.entries(value).every(([name, assignment]) => repoNamePattern.test(name) && isRepositoryAssignment(assignment))
 }
 
 // Fixed diagnostics only: never echo environment values or JSON parser errors.
@@ -62,7 +60,7 @@ const app = buildApp({
 }, {
   ...kubernetes,
   tokenIssuer,
-  repositories,
+  repoLookup: async repo => Object.hasOwn(repositories, repo) ? repositories[repo] : undefined,
 })
 
 async function shutdown() {

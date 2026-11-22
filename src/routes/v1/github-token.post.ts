@@ -1,6 +1,6 @@
 import type { FastifyError, FastifyPluginAsync, FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify'
 import type { RepositoryAssignment, TokenExchangeOptions, TokenPermissions } from '../../token-exchange.types.js'
-import { isRecord } from '../../validation.js'
+import { isRecord, repoNamePattern } from '../../validation.js'
 
 const permissionsByRole = {
   planner: {
@@ -27,7 +27,6 @@ const statusByDenial = {
 } as const satisfies Record<Denial, number>
 
 const bearerPattern = /^Bearer +([A-Za-z0-9\-._~+/]+=*)$/i
-const repositoryPattern = /^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/
 
 // Accept only an absent body or {}.
 function isEmptyBody(body: unknown): boolean {
@@ -36,10 +35,6 @@ function isEmptyBody(body: unknown): boolean {
 
 function isRole(serviceAccount: string): serviceAccount is Role {
   return Object.hasOwn(permissionsByRole, serviceAccount)
-}
-
-function isAllowlisted(repositories: TokenExchangeOptions['repositories'], repository: string | undefined): repository is string {
-  return typeof repository === 'string' && repositoryPattern.test(repository) && Object.hasOwn(repositories, repository)
 }
 
 function errorResponse(code: string, description: string) {
@@ -106,7 +101,7 @@ const schema = {
     400: errorResponse('invalid_request', 'Query string, extra body fields, malformed input or unsupported content type.'),
     401: errorResponse('invalid_credential', 'Missing or malformed bearer token, failed review or wrong audience.'),
     403: errorResponse('assignment_denied', 'Unknown namespace or ServiceAccount, pod UID/ServiceAccount mismatch, or missing/malformed/unapproved repository annotation.'),
-    503: errorResponse('dependency_unavailable', 'Token review, pod lookup or issuer failed. No fallback credential or upstream details are returned.'),
+    503: errorResponse('dependency_unavailable', 'Token review, pod lookup, repo lookup or issuer failed. No fallback credential or upstream details are returned.'),
   },
 }
 
@@ -145,12 +140,16 @@ async function authorize(options: TokenExchangeOptions, token: string): Promise<
     return { error: 'assignment_denied' }
   }
   const repository = pod.annotations['ai-native-sdlc/repository']
-  if (!isAllowlisted(options.repositories, repository)) {
+  if (typeof repository !== 'string' || !repoNamePattern.test(repository)) {
+    return { error: 'assignment_denied' }
+  }
+  const assignment = await options.repoLookup(repository)
+  if (assignment === undefined) {
     return { error: 'assignment_denied' }
   }
   return {
     role,
-    assignment: options.repositories[repository],
+    assignment,
   }
 }
 

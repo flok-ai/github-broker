@@ -7,3 +7,5 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function isPositiveSafeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) > 0
 }
+
+export const repoNamePattern = /^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/
