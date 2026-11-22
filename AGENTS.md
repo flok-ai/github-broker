@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Source imports
+
+- Use Node package subpath imports such as `#src/token-exchange.types.js` for source modules in other directories. Use `./` relative imports for sibling files. Keep the `.js` extension in both forms.
+
 ## API documentation
 
 - Route schemas must include `summary` and `description`; keep tags, request/response schemas and examples aligned with behavior.
