@@ -45,7 +45,7 @@ Route schemas must have `summary` and `description`; keep their tags, request/re
 
 `src/app.ts` constructs the application without opening a socket. `startServer(env)` in `src/start-server.ts` configures the adapters and logging and starts the listener using `HOST` and `PORT`. The `src/server.ts` entrypoint handles process errors and shutdown signals. Production logging uses Fastify's Pino integration with authorization-header redaction.
 
-Local imports use `.js` extensions so compiled ES modules run directly in Node. The build emits service code only; Vitest handles the TypeScript test files. Tests generate disposable RSA keys and use no real credentials or network dependencies. Running the server requires the configuration below.
+Local imports use `.js` extensions. Use relative imports for sibling files and `#src/…` for source modules in other directories. The package import map selects TypeScript source under the development condition and compiled JavaScript by default. The build emits service code only; Vitest handles the TypeScript test files. Tests generate disposable RSA keys and use no real credentials or network dependencies. Running the server requires the configuration below.
 
 ## Token exchange
 

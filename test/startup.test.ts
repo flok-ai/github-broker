@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
 import { expect, test } from 'vitest'
-import { startServer } from '../src/start-server.js'
+import { startServer } from '#src/start-server.js'
 import { startupEnvironment } from './startup-fixture.js'
 
 test.for(['default', 'configured'])('starts with a %s repo config path', async (path, { onTestFinished }) => {

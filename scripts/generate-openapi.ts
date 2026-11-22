@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises'
 import Fastify from 'fastify'
 import swagger from '@fastify/swagger'
-import { registerAppRoutes } from '../src/app.js'
+import { registerAppRoutes } from '#src/app.js'
 
 const app = Fastify()
 try {

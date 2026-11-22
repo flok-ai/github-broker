@@ -1,6 +1,6 @@
 import type { FastifyError, FastifyPluginAsync, FastifyReply, FastifyRequest, HookHandlerDoneFunction } from 'fastify'
-import type { RepositoryAssignment, TokenExchangeOptions, TokenPermissions } from '../../token-exchange.types.js'
-import { isRecord, repoNamePattern } from '../../validation.js'
+import type { RepositoryAssignment, TokenExchangeOptions, TokenPermissions } from '#src/token-exchange.types.js'
+import { isRecord, repoNamePattern } from '#src/validation.js'
 
 const permissionsByRole = {
   planner: {

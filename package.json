@@ -8,15 +8,21 @@
   "engines": {
     "node": ">=24.0.0 <25"
   },
+  "imports": {
+    "#src/*.js": {
+      "development": "./src/*.ts",
+      "default": "./dist/*.js"
+    }
+  },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "tsx watch --conditions=development src/server.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "npm run build && vitest run",
-    "docs:build": "node --import tsx scripts/generate-openapi.ts && npm run build --prefix docs-site",
-    "docs:dev": "node --import tsx scripts/generate-openapi.ts && npm run dev --prefix docs-site"
+    "docs:build": "node --conditions=development --import tsx scripts/generate-openapi.ts && npm run build --prefix docs-site",
+    "docs:dev": "node --conditions=development --import tsx scripts/generate-openapi.ts && npm run dev --prefix docs-site"
   },
   "dependencies": {
     "@octokit/auth-app": "^8.3.1",

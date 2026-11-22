@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream'
 import { expect, test, vi } from 'vitest'
-import { buildApp } from '../../../src/app.js'
-import type { PodLookup, RepoLookup, TokenIssuer, TokenValidator } from '../../../src/token-exchange.types.js'
+import { buildApp } from '#src/app.js'
+import type { PodLookup, RepoLookup, TokenIssuer, TokenValidator } from '#src/token-exchange.types.js'
 
 const identity = {
   authenticated: true as const,

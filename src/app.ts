@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
-import githubTokenRoute from './routes/v1/github-token.post.js'
+import githubTokenRoute from '#src/routes/v1/github-token.post.js'
 import type { TokenExchangeOptions } from './token-exchange.types.js'
 
 export function buildApp(options: FastifyServerOptions = {}, tokenExchange?: TokenExchangeOptions) {

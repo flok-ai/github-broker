@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test as base } from 'vitest'
-import { createYamlRepoLookup, RepoConfigError } from '../src/repos-config.js'
+import { createYamlRepoLookup, RepoConfigError } from '#src/repos-config.js'
 
 const test = base.extend<{ path: string }>({
   path: async ({ onTestFinished }, use) => {
