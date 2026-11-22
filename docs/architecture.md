@@ -6,19 +6,20 @@ Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main
 
 - Standalone Fastify API with one endpoint, `POST /v1/github-token`, plus `/healthz`. No UI.
 - Policy lives in the route and depends only on injected functions (`TokenExchangeOptions` in `src/token-exchange.types.ts`). `startServer(env)` in `src/start-server.ts` wires the real Kubernetes adapters, the GitHub App issuer and the YAML repo allowlist (`repos.flok.yaml`, mounted from a ConfigMap) behind an async `repoLookup`.
+- The pod annotation `flok-ai.com/repo: owner/repo` selects the repo. All flok Kubernetes keys use the `flok-ai.com/` prefix.
 - Deployed to AKS and [verified live](./live-verification.md) on 2026-11-18.
 - CI verifies pull requests and `main`, uploads coverage to Qlty and publishes the container image to ACR. The API reference is generated offline from route schemas and published to GitHub Pages.
 
 ## Open decisions
 
 - Repo allowlist: the YAML file ([#23](https://github.com/flok-ai/github-broker/issues/23)) is a step towards database-backed repos managed in a UI; a Drizzle-backed lookup can replace it through `repoLookup`.
-- Pod annotation: rename `ai-native-sdlc/repository` to `flok-ai.com/repo`, decided 2026-11-22. It needs a coordinated change with the `workflows` templates and isn't implemented yet.
 - Deferred: run/step/attempt labels on issued tokens, and production hardening.
 
 ## Decision log
 
 | Date | Decision | Reasoning |
 |---|---|---|
+| 2026-11-22 | Rename the pod annotation `ai-native-sdlc/repository` to `flok-ai.com/repo` (#35), with no support for the old key | Use a domain flok controls as the prefix for all its Kubernetes keys, and `repo` to match the broker's naming since #23. A hard switch: nothing else consumes the key, and pods with the old key get `403`. Merge with the workflows change, then deploy the broker. |
 | 2026-11-22 | Move the decision log and live verification from the README into `docs/` | Keep the README focused on what the component is, how it fits and how to use it; follow the platform-services `docs/` layout. |
 | 2026-11-22 | Use a list of named repos keyed at runtime by slug (#23 review) | Display names make the file easier to scan as repos are added. Reject duplicate slugs to keep lookup unambiguous. |
 | 2026-11-22 | Mount the YAML repo allowlist from a ConfigMap and load it through an async lookup (#23) | Keep allowlist edits separate from image builds and allow a database-backed lookup later. ConfigMap applies can bypass PR review. |

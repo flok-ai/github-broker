@@ -12,7 +12,7 @@ const identity = {
   podUid: 'pod-uid',
 }
 const repository = 'julie-ng/aks-architect-ai'
-const annotation = 'ai-native-sdlc/repository'
+const annotation = 'flok-ai.com/repo'
 const pod = {
   uid: 'pod-uid',
   serviceAccount: 'planner',
@@ -277,6 +277,24 @@ for (const value of [
     expect(f.tokenIssuer).not.toHaveBeenCalled()
   })
 }
+
+test('denies a pod that carries only the old annotation key', async ({ onTestFinished }) => {
+  const f = fixture()
+  onTestFinished(() => f.app.close())
+  f.podLookup.mockResolvedValue({
+    ...pod,
+    annotations: { 'ai-native-sdlc/repository': repository },
+  })
+  const response = await f.app.inject({
+    method: 'POST',
+    url: '/v1/github-token',
+    headers,
+  })
+  expect(response.statusCode).toBe(403)
+  expect(response.json()).toEqual({ error: { code: 'assignment_denied' } })
+  expect(f.repoLookup).not.toHaveBeenCalled()
+  expect(f.tokenIssuer).not.toHaveBeenCalled()
+})
 
 test('denies a valid repo name when the lookup has no assignment', async ({ onTestFinished }) => {
   const f = fixture()

@@ -23,7 +23,7 @@ const status = {
 const pod = {
   metadata: {
     uid: 'pod-uid-123',
-    annotations: { 'ai-native-sdlc/repository': 'owner/repo' },
+    annotations: { 'flok-ai.com/repo': 'owner/repo' },
   },
   spec: { serviceAccountName: 'coder' },
 }

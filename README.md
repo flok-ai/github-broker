@@ -25,8 +25,7 @@ Kubernetes, not the pod, says who is calling. Pods annotated with the same repo 
 ┌─ namespace: agents ───────────────────────────────────────────────────┐
 │ ┌─ pod: planner-… ───────────────┐   ┌─ pod: coder-… ───────────────┐ │
 │ │ serviceAccountName: planner    │   │ serviceAccountName: coder    │ │
-│ │ ai-native-sdlc/repository:     │   │ ai-native-sdlc/repository:   │ │
-│ │   owner/repo                   │   │   owner/repo                 │ │
+│ │ flok-ai.com/repo: owner/repo   │   │ flok-ai.com/repo: owner/repo │ │
 │ └───────────────┬────────────────┘   └────────────────┬─────────────┘ │
 └─────────────────┼─────────────────────────────────────┼───────────────┘
                   │ Bearer <planner token>              │ Bearer <coder token>
@@ -72,7 +71,7 @@ The broker never caches tokens and never accepts scope from the caller.
 | Namespace | `agents` |
 | ServiceAccount | `planner` or `coder`; anything else is denied |
 | Token | Projected ServiceAccount token with audience `token-broker` |
-| Pod annotation | `ai-native-sdlc/repository: owner/repo`, an exact match for a slug in the allowlist |
+| Pod annotation | `flok-ai.com/repo: owner/repo`, an exact match for a slug in the allowlist |
 
 | ServiceAccount | Issued permissions |
 |---|---|
