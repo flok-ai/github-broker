@@ -8,7 +8,7 @@ Platform design: [broker architecture](https://github.com/flok-ai/flok/blob/main
 - Policy lives in the route and depends only on injected functions (`TokenExchangeOptions` in `src/token-exchange.types.ts`). `startServer(env)` in `src/start-server.ts` wires the real Kubernetes adapters, the GitHub App issuer and the YAML repo allowlist (`repos.flok.yaml`, mounted from a ConfigMap) behind an async `repoLookup`.
 - The pod annotation `flok-ai.com/repo: owner/repo` selects the repo. All flok Kubernetes keys use the `flok-ai.com/` prefix.
 - Deployed to AKS and [verified live](./live-verification.md) on 2026-11-18.
-- CI verifies pull requests and `main`, uploads coverage to Qlty and publishes the container image to ACR. The API reference is generated offline from route schemas and published to GitHub Pages.
+- CI verifies pull requests and `main` and uploads coverage to Qlty from `main`. CD publishes image builds to ACR and can roll them out to AKS by digest. Releases are published on demand from existing ACR images. The API reference is generated offline from route schemas and published to GitHub Pages.
 
 ## Open decisions
 

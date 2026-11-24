@@ -137,7 +137,12 @@ Invalid configuration exits before listening with fixed diagnostics that omit su
 
 ### Deploy
 
-On pushes to `main`, after checks pass, CI publishes `<acr>.azurecr.io/github-broker:latest` and `sha-<full-commit>` from the production environment. It needs environment variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC, following platform-services.
+[CD](.github/workflows/cd.yaml) runs on pushes to `main` that change the Docker build inputs or the CD workflow. After lint, typecheck and tests pass, it publishes an AMD64 image to ACR with a `sha-<full-commit>` tag. It also updates `latest` for the manual bootstrap below. When AKS deployment is enabled, CD updates the existing broker Deployment to the published digest and waits for readiness.
+
+- **Publish to ACR.** The GitHub `production` environment uses variable `AZURE_ACR_NAME` and secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_SUBSCRIPTION_ID` for Azure OIDC. The Azure identity needs push access to the registry.
+- **Enable AKS rollout.** Set `AKS_CLUSTER_NAME` and `AKS_RESOURCE_GROUP` in `production`. Give the federated identity the Azure Kubernetes Service Cluster User Role at cluster scope and permission to get, list, watch and patch Deployments in the `github-broker` namespace. The runner must be able to reach the AKS API. Set the repository variable `AKS_DEPLOY_ENABLED` to `true` once access is configured.
+
+Use the commands below to bootstrap the broker or apply Kubernetes manifest changes. Applying the Deployment manifest sets the image to `latest`; the next CD rollout pins the live Deployment to a digest again.
 
 ```sh
 cp manifests/.env.example manifests/.env
@@ -153,7 +158,13 @@ kubectl -n github-broker get pods
 kubectl -n github-broker logs deployment/github-broker
 ```
 
-After publishing a new `latest` image, run `kubectl -n github-broker rollout restart deployment/github-broker`. The readiness probe uses `/healthz`. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`.
+For a manual rollout using the manifest above, run `kubectl -n github-broker rollout restart deployment/github-broker` to pull the current `latest` image. The readiness probe uses `/healthz`. To inspect it locally, run `kubectl -n github-broker port-forward service/github-broker 3000:80` and `curl http://127.0.0.1:3000/healthz`.
+
+### Publish a release
+
+Review and merge the new version's entry in [CHANGELOG.md](CHANGELOG.md). Manually run [Release](.github/workflows/release.yaml) on `main` with a stable version tag (for example, `v0.3.0`) and the full SHA of the commit whose image should be released. The workflow reads the reviewed notes from `main` at dispatch, adds the version tag to the existing image in ACR, and publishes the GitHub tag and release. Choose a commit that already has a SHA image, since Markdown-only and other non-build changes skip CD. Publishing does not depend on AKS rollout status.
+
+Configure a GitHub `release` environment restricted to `main` with the same Azure OIDC secret names as `production` and variables `AZURE_ACR_NAME` and `AZURE_ACR_RESOURCE_GROUP`. Federate its Azure identity to that environment and grant it the **Container Registry Data Importer and Data Reader** role on the registry.
 
 ### Update the allowlist
 
