@@ -1,0 +1,116 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+    # Build only when the Docker inputs or this workflow change.
+    paths:
+      - .github/workflows/cd.yaml
+      - .dockerignore
+      - Dockerfile
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - tsconfig.build.json
+      - src/**
+      - '!src/**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: broker-cd
+  cancel-in-progress: false
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+
+  publish:
+    needs: lint-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.image.outputs.ref }}
+    env:
+      AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish SHA image and resolve its digest
+        id: image
+        shell: bash
+        run: |
+          repository=github-broker
+          image="$AZURE_ACR_NAME.azurecr.io/$repository"
+          tag="sha-$GITHUB_SHA"
+          existing=$(az acr repository show-tags --name "$AZURE_ACR_NAME" \
+            --repository "$repository" --query "[?@=='$tag'] | [0]" --output tsv)
+          if [[ -z "$existing" ]]; then
+            az acr login --name "$AZURE_ACR_NAME"
+            # Keep latest available for the existing manual manifest workflow.
+            docker build --platform linux/amd64 -t "$image:$tag" -t "$image:latest" .
+            docker push "$image:latest"
+            docker push "$image:$tag"
+          fi
+          digest=$(az acr repository show --name "$AZURE_ACR_NAME" \
+            --image "$repository:$tag" --query digest --output tsv)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          echo "ref=$image@$digest" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: publish
+    if: vars.AKS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    permissions:
+      id-token: write
+    env:
+      AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
+      AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
+      IMAGE: ${{ needs.publish.outputs.image }}
+    steps:
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Update the broker image and wait for readiness
+        shell: bash
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/broker-kubeconfig"
+          mkdir -p "$RUNNER_TEMP/bin"
+          az aks install-cli --install-location "$RUNNER_TEMP/bin/kubectl" \
+            --kubelogin-install-location "$RUNNER_TEMP/bin/kubelogin"
+          export PATH="$RUNNER_TEMP/bin:$PATH"
+          az aks get-credentials --resource-group "$AKS_RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER_NAME" --file "$KUBECONFIG" --format exec
+          kubelogin convert-kubeconfig -l azurecli
+          kubectl -n github-broker set image deployment/github-broker "github-broker=$IMAGE"
+          kubectl -n github-broker rollout status deployment/github-broker --timeout=180s

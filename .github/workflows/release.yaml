@@ -1,0 +1,109 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag, including v (for example v0.3.0)'
+        required: true
+        type: string
+      commit:
+        description: Full main commit SHA with a published image
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: broker-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+      AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate version and commit and extract reviewed changelog
+        shell: bash
+        run: |
+          if [[ ! "$VERSION" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Expected a stable SemVer tag such as v0.3.0."
+            exit 1
+          fi
+          if [[ ! "$RELEASE_COMMIT" =~ ^[a-f0-9]{40}$ ]] ||
+              ! git merge-base --is-ancestor "$RELEASE_COMMIT" "$GITHUB_SHA"; then
+            echo "::error::Provide the full SHA of a commit on main."
+            exit 1
+          fi
+          if git show-ref --verify --quiet "refs/tags/$VERSION" &&
+              [[ "$(git rev-parse "refs/tags/$VERSION^{commit}")" != "$RELEASE_COMMIT" ]]; then
+            echo "::error::Git tag $VERSION already refers to another commit."
+            exit 1
+          fi
+          git show "$GITHUB_SHA:CHANGELOG.md" |
+            awk -v heading="## [${VERSION#v}]" '
+              /^## / { if (section) section = 0; else if (index($0, heading " - ") == 1) section = 1; next }
+              section && !/^\[[^]]+\]:/ { print; if (NF) has_content = 1 }
+              /^\[[^]]+\]:/ { links = links $0 "\n" }
+              END { if (!has_content) exit 1; printf "%s", links }
+            ' > "$RUNNER_TEMP/release-notes.md" || {
+              echo "::error::No changelog entry for $VERSION on main at dispatch."
+              exit 1
+            }
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Add and verify the version tag in ACR
+        shell: bash
+        run: |
+          repository=github-broker
+          digest=$(az acr repository show --name "$AZURE_ACR_NAME" \
+            --image "$repository:sha-$RELEASE_COMMIT" --query digest --output tsv)
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          existing=$(az acr repository show-tags --name "$AZURE_ACR_NAME" \
+            --repository "$repository" --query "[?@=='$VERSION'] | [0]" --output tsv)
+          if [[ -z "$existing" ]]; then
+            registry_id="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${AZURE_ACR_RESOURCE_GROUP}/providers/Microsoft.ContainerRegistry/registries/$AZURE_ACR_NAME"
+            az acr import --name "$AZURE_ACR_NAME" --registry "$registry_id" \
+              --source "$repository@$digest" --image "$repository:$VERSION"
+          fi
+          tagged_digest=$(az acr repository show --name "$AZURE_ACR_NAME" \
+            --image "$repository:$VERSION" --query digest --output tsv)
+          if [[ "$tagged_digest" != "$digest" ]]; then
+            echo "::error::ACR tag $VERSION points to a different image."
+            exit 1
+          fi
+          printf '\nContainer image: `%s.azurecr.io/%s:%s` (digest `%s`).\n' \
+            "$AZURE_ACR_NAME" "$repository" "$VERSION" "$digest" >> "$RUNNER_TEMP/release-notes.md"
+        env:
+          AZURE_ACR_RESOURCE_GROUP: ${{ vars.AZURE_ACR_RESOURCE_GROUP }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish the Git tag and GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$VERSION" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-state"; then
+            [[ "$(cat "$RUNNER_TEMP/release-state")" == false ]]
+            [[ "$(git rev-parse "refs/tags/$VERSION^{commit}")" == "$RELEASE_COMMIT" ]]
+          else
+            gh release create "$VERSION" --target "$RELEASE_COMMIT" --title "$VERSION" \
+              --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
